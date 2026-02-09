@@ -57,9 +57,9 @@ jobs:
           kubectl wait --for=condition=ready pod -l k8s-app=kube-dns -n kube-system --timeout=300s || true
 
       - name: Setup Helm
-        uses: helm/helm-action-setup@v2
+        uses: azure/setup-helm@v3
         with:
-          version: 'v3.13.0'
+          version: '3.13.0'
 
       - name: Add Argo CD Helm repository
         run: helm repo add argo https://argoproj.github.io/argo-helm
