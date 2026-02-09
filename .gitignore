@@ -1,0 +1,20 @@
+.env*
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+*.tfvars
+!*.tfvars.example
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+*.log
+.DS_Store
+Thumbs.db
+
+# Ignore all .md files except README.md
+*.md
+!README.md
