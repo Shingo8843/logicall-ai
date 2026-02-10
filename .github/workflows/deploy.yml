@@ -11,9 +11,9 @@ permissions:
   contents: read
 
 env:
-  AWS_REGION: ${{ vars.AWS_REGION || env.AWS_REGION || 'us-west-2' }}
-  CLUSTER_NAME: ${{ vars.CLUSTER_NAME || env.CLUSTER_NAME || 'eks-fargate-only' }}
-  AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN || env.AWS_ROLE_ARN }}
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-west-2' }}
+  CLUSTER_NAME: ${{ vars.CLUSTER_NAME || 'eks-fargate-only' }}
+  AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
 
 jobs:
   deploy:
