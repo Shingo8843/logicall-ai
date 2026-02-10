@@ -119,6 +119,9 @@ jobs:
             --namespace argocd \
             --create-namespace \
             --set server.service.type=LoadBalancer \
+            --set server.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-type"=nlb \
+            --set server.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-scheme"=internet-facing \
+            --set server.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-cross-zone-load-balancing-enabled"=true \
             --set configs.params.server.insecure=true \
             --kubeconfig $HOME/.kube/config \
             --wait \
@@ -172,6 +175,23 @@ jobs:
             echo "Warning: Application did not become healthy within timeout. This may be expected if the repository is private or requires credentials."
             echo "You may need to configure repository credentials in Argo CD."
           }
+          
+          # Force sync if needed and verify resources exist
+          echo "Verifying resources were actually created..."
+          kubectl get pods -n apps || echo "No pods found in apps namespace"
+          kubectl get deployment -n apps || echo "No deployments found in apps namespace"
+          kubectl get service -n apps || echo "No services found in apps namespace"
+          
+          # If resources don't exist, try manual sync
+          if ! kubectl get deployment nginx-hello -n apps &>/dev/null; then
+            echo "Deployment not found. Triggering manual sync..."
+            kubectl patch application root-app -n argocd --type merge -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"main"}}}' || true
+            echo "Waiting 30 seconds for sync to complete..."
+            sleep 30
+            kubectl get pods -n apps || echo "Still no pods after manual sync"
+            kubectl get deployment -n apps || echo "Still no deployments after manual sync"
+            kubectl get service -n apps || echo "Still no services after manual sync"
+          fi
 
       - name: Get Argo CD server URL
         run: |

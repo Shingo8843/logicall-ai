@@ -9,6 +9,8 @@ spec:
     repoURL: https://github.com/Shingo8843/logicall-ai.git
     targetRevision: main
     path: gitops/apps
+    directory:
+      recurse: true
   destination:
     server: https://kubernetes.default.svc
     namespace: apps
