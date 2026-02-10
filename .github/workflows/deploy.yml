@@ -42,183 +42,86 @@ jobs:
         with:
           terraform_version: 1.6.0
 
-      # kubectl will be configured after Terraform adds role to aws-auth
-
       - name: Terraform Init - EKS
         working-directory: infra/eks
         run: terraform init
 
-      - name: Check for existing cluster (debug)
-        run: |
-          echo "Checking if cluster already exists..."
-          aws eks describe-cluster --name ${{ env.CLUSTER_NAME }} --region ${{ env.AWS_REGION }} --query 'cluster.[name,status,createdAt]' --output table 2>&1 || echo "Cluster does not exist (this is expected for fresh deployments)"
-
-      - name: Terraform Plan - EKS
-        working-directory: infra/eks
-        run: terraform plan -out=tfplan
-
       - name: Terraform Apply - EKS
         working-directory: infra/eks
         timeout-minutes: 30
-        env:
-          TF_LOG: INFO
-        run: |
-          echo "Starting Terraform apply (EKS cluster creation can take 10-20 minutes)..."
-          echo "This step has a 30-minute timeout. EKS cluster creation typically takes 10-15 minutes."
-          terraform apply -auto-approve tfplan || {
-            EXIT_CODE=$?
-            echo "Terraform apply failed with exit code: $EXIT_CODE"
-            echo "Checking cluster status in AWS..."
-            aws eks describe-cluster --name ${{ env.CLUSTER_NAME }} --region ${{ env.AWS_REGION }} --query 'cluster.[name,status,createdAt,health.issues]' --output json || echo "Cluster may not exist or is still being created"
-            echo "Checking for any error messages in CloudWatch logs..."
-            aws logs tail /aws/eks/${{ env.CLUSTER_NAME }}/cluster --region ${{ env.AWS_REGION }} --since 30m --format short 2>&1 | tail -50 || echo "Could not retrieve logs"
-            exit $EXIT_CODE
-          }
+        run: terraform apply -auto-approve
 
-      - name: Configure kubectl (GitHub Actions role now in aws-auth)
+      - name: Configure kubectl
         run: |
-          mkdir -p ~/.kube
-          # Don't use --role-arn since we're already authenticated as that role via OIDC
           aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.CLUSTER_NAME }}
-          export KUBECONFIG=$HOME/.kube/config
-          echo "Testing cluster connectivity..."
           kubectl cluster-info
-          kubectl get nodes
-
-      - name: Wait for cluster to be ready
-        run: |
-          export KUBECONFIG=$HOME/.kube/config
-          echo "Waiting for CoreDNS pods to be ready..."
-          kubectl wait --for=condition=ready pod -l k8s-app=kube-dns -n kube-system --timeout=300s || true
-          echo "Verifying cluster is operational..."
-          kubectl get nodes
-          kubectl get namespaces
 
       - name: Setup Helm
         uses: azure/setup-helm@v3
         with:
           version: '3.13.0'
 
-      - name: Add Argo CD Helm repository
-        run: helm repo add argo https://argoproj.github.io/argo-helm
+      - name: Install AWS Load Balancer Controller
+        run: |
+          helm repo add eks https://aws.github.io/eks-charts
+          helm repo update
+          
+          # We pull the VPC ID dynamically
+          VPC_ID=$(aws eks describe-cluster --name ${{ env.CLUSTER_NAME }} --query "cluster.resourcesVpcConfig.vpcId" --output text)
+          
+          helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
+            -n kube-system \
+            --set clusterName=${{ env.CLUSTER_NAME }} \
+            --set serviceAccount.create=false \
+            --set serviceAccount.name=aws-load-balancer-controller \
+            --set region=${{ env.AWS_REGION }} \
+            --set vpcId=$VPC_ID \
+            --wait
 
-      - name: Update Helm repositories
-        run: helm repo update
+      - name: Install External Secrets Operator
+        run: |
+          helm repo add external-secrets https://charts.external-secrets.io
+          helm repo update
+          
+          helm upgrade --install external-secrets external-secrets/external-secrets \
+            -n external-secrets \
+            --create-namespace \
+            --set installCRDs=true \
+            --wait
 
       - name: Install Argo CD
         run: |
-          export KUBECONFIG=$HOME/.kube/config
-          echo "Verifying kubectl access before Helm install..."
-          kubectl cluster-info
-          kubectl get nodes
-          echo "Verifying kubeconfig file exists and is readable..."
-          ls -la $HOME/.kube/config
-          cat $HOME/.kube/config | head -5
-          echo "Installing Argo CD..."
+          helm repo add argo https://argoproj.github.io/argo-helm
+          helm repo update
           helm upgrade --install argocd argo/argo-cd \
             --namespace argocd \
             --create-namespace \
             --set server.service.type=LoadBalancer \
-            --set server.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-type"=nlb \
+            --set server.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-type"=external \
+            --set server.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-nlb-target-type"=ip \
             --set server.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-scheme"=internet-facing \
-            --set server.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-cross-zone-load-balancing-enabled"=true \
             --set configs.params.server.insecure=true \
-            --kubeconfig $HOME/.kube/config \
             --wait \
             --timeout 10m
 
-      - name: Wait for Argo CD server to be ready
-        run: |
-          export KUBECONFIG=$HOME/.kube/config
-          kubectl wait --for=condition=available deployment/argocd-server -n argocd --timeout=300s
-
       - name: Apply Argo CD root application
         run: |
-          export KUBECONFIG=$HOME/.kube/config
           echo "Applying root-app Argo CD application..."
           kubectl apply -f gitops/argocd/root-app.yaml
           
-          echo "Waiting for root-app to be synced..."
-          echo "Checking application status..."
-          kubectl get application root-app -n argocd -o yaml || true
-          
-          # Wait for application to be healthy, but check status periodically
-          for i in {1..30}; do
-            echo "Attempt $i/30: Checking application status..."
-            STATUS=$(kubectl get application root-app -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
-            HEALTH=$(kubectl get application root-app -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown")
-            echo "Sync Status: $STATUS, Health Status: $HEALTH"
-            
-            if [ "$STATUS" = "Synced" ] && [ "$HEALTH" = "Healthy" ]; then
-              echo "Application is synced and healthy!"
-              break
-            fi
-            
-            # Show any error messages
-            if [ "$STATUS" = "Unknown" ] || [ "$STATUS" = "Error" ]; then
-              echo "Application status shows error. Checking details..."
-              kubectl describe application root-app -n argocd || true
-            fi
-            
-            if [ $i -lt 30 ]; then
-              sleep 10
-            fi
-          done
-          
-          # Final status check
-          echo "Final application status:"
-          kubectl get application root-app -n argocd -o wide || true
-          kubectl describe application root-app -n argocd || true
-          
-          # Try to wait for healthy condition, but don't fail if it times out
-          kubectl wait --for=condition=healthy application/root-app -n argocd --timeout=60s || {
-            echo "Warning: Application did not become healthy within timeout. This may be expected if the repository is private or requires credentials."
-            echo "You may need to configure repository credentials in Argo CD."
-          }
-          
-          # Force sync if needed and verify resources exist
-          echo "Verifying resources were actually created..."
-          kubectl get pods -n apps || echo "No pods found in apps namespace"
-          kubectl get deployment -n apps || echo "No deployments found in apps namespace"
-          kubectl get service -n apps || echo "No services found in apps namespace"
-          
-          # If resources don't exist, try manual sync
-          if ! kubectl get deployment nginx-hello -n apps &>/dev/null; then
-            echo "Deployment not found. Triggering manual sync..."
-            kubectl patch application root-app -n argocd --type merge -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"main"}}}' || true
-            echo "Waiting 30 seconds for sync to complete..."
-            sleep 30
-            kubectl get pods -n apps || echo "Still no pods after manual sync"
-            kubectl get deployment -n apps || echo "Still no deployments after manual sync"
-            kubectl get service -n apps || echo "Still no services after manual sync"
-          fi
+          echo "Waiting for root-app to sync..."
+          # Give Argo CD a moment to pick up the new file
+          sleep 20
+          kubectl wait --for=condition=healthy application/root-app -n argocd --timeout=300s || echo "Wait timed out, but proceeding to status check..."
 
-      - name: Get Argo CD server URL
+      - name: Final Status and Credentials
         run: |
-          export KUBECONFIG=$HOME/.kube/config
-          echo "Argo CD Server URL:"
-          LB_URL=$(kubectl get svc argocd-server -n argocd -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' || echo "")
-          if [ -n "$LB_URL" ]; then
-            echo "http://$LB_URL"
-            echo "https://$LB_URL"
-            echo ""
-            echo "Note: NLB may take 2-5 minutes to fully provision. If connection fails, wait and try again."
-            echo "You can also use port-forward as a workaround:"
-            echo "  kubectl port-forward -n argocd svc/argocd-server 8080:80"
-          else
-            echo "LoadBalancer pending..."
-          fi
+          echo "--- Deployment Summary ---"
+          echo "Argo CD URL:"
+          kubectl get svc argocd-server -n argocd -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
           echo ""
           echo "Argo CD Admin Password:"
           kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
           echo ""
-          echo ""
-          echo "Waiting for NGINX hello world app to be deployed by Argo CD..."
-          sleep 30
-          echo ""
-          echo "NGINX Hello World App LoadBalancer:"
-          kubectl get svc nginx-hello -n apps -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' || echo "LoadBalancer pending (Argo CD may still be syncing)..."
-          echo ""
-
-
-          
+          echo "Nginx App URL:"
+          kubectl get svc nginx-hello -n apps -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' || echo "Pending..."
