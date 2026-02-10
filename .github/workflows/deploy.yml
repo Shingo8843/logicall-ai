@@ -83,11 +83,9 @@ jobs:
           if ! kubectl get configmap aws-auth -n kube-system -o yaml | grep -q "GitHubActionsRole"; then
             # Use kubectl patch to add the role
             CURRENT=$(kubectl get configmap aws-auth -n kube-system -o jsonpath='{.data.mapRoles}')
-            NEW_ROLE="
-- rolearn: ${{ env.AWS_ROLE_ARN }}
-  username: github-actions
-  groups:
-  - system:masters"
+            ROLE_ARN="${{ env.AWS_ROLE_ARN }}"
+            # Build the new role entry using printf to avoid YAML parsing issues
+            NEW_ROLE=$(printf "\n- rolearn: %s\n  username: github-actions\n  groups:\n  - system:masters" "$ROLE_ARN")
             kubectl patch configmap aws-auth -n kube-system --type merge \
               -p "{\"data\":{\"mapRoles\":\"${CURRENT}${NEW_ROLE}\"}}"
           else
