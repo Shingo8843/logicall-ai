@@ -219,6 +219,28 @@ resource "aws_eks_addon" "kube_proxy" {
   tags = var.tags
 }
 
+# Security group rule to allow inbound traffic from load balancers
+# This allows HTTP/HTTPS traffic to reach pods through load balancers
+resource "aws_security_group_rule" "cluster_ingress_http" {
+  description       = "Allow HTTP traffic from load balancers"
+  type              = "ingress"
+  from_port         = 80
+  to_port           = 80
+  protocol          = "tcp"
+  cidr_blocks       = ["0.0.0.0/0"]
+  security_group_id = aws_eks_cluster.main.vpc_config[0].cluster_security_group_id
+}
+
+resource "aws_security_group_rule" "cluster_ingress_https" {
+  description       = "Allow HTTPS traffic from load balancers"
+  type              = "ingress"
+  from_port         = 443
+  to_port           = 443
+  protocol          = "tcp"
+  cidr_blocks       = ["0.0.0.0/0"]
+  security_group_id = aws_eks_cluster.main.vpc_config[0].cluster_security_group_id
+}
+
 # Kubernetes provider (for post-creation resources)
 data "aws_eks_cluster_auth" "main" {
   name = aws_eks_cluster.main.name
