@@ -113,16 +113,71 @@ jobs:
       - name: Apply Argo CD root application
         run: |
           export KUBECONFIG=$HOME/.kube/config
+          echo "Applying root-app Argo CD application..."
           kubectl apply -f gitops/argocd/root-app.yaml
-          kubectl wait --for=condition=healthy application/root-app -n argocd --timeout=300s || true
+          
+          echo "Waiting for root-app to be synced..."
+          echo "Checking application status..."
+          kubectl get application root-app -n argocd -o yaml || true
+          
+          # Wait for application to be healthy, but check status periodically
+          for i in {1..30}; do
+            echo "Attempt $i/30: Checking application status..."
+            STATUS=$(kubectl get application root-app -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
+            HEALTH=$(kubectl get application root-app -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown")
+            echo "Sync Status: $STATUS, Health Status: $HEALTH"
+            
+            if [ "$STATUS" = "Synced" ] && [ "$HEALTH" = "Healthy" ]; then
+              echo "Application is synced and healthy!"
+              break
+            fi
+            
+            # Show any error messages
+            if [ "$STATUS" = "Unknown" ] || [ "$STATUS" = "Error" ]; then
+              echo "Application status shows error. Checking details..."
+              kubectl describe application root-app -n argocd || true
+            fi
+            
+            if [ $i -lt 30 ]; then
+              sleep 10
+            fi
+          done
+          
+          # Final status check
+          echo "Final application status:"
+          kubectl get application root-app -n argocd -o wide || true
+          kubectl describe application root-app -n argocd || true
+          
+          # Try to wait for healthy condition, but don't fail if it times out
+          kubectl wait --for=condition=healthy application/root-app -n argocd --timeout=60s || {
+            echo "Warning: Application did not become healthy within timeout. This may be expected if the repository is private or requires credentials."
+            echo "You may need to configure repository credentials in Argo CD."
+          }
 
       - name: Get Argo CD server URL
         run: |
           export KUBECONFIG=$HOME/.kube/config
           echo "Argo CD Server URL:"
-          kubectl get svc argocd-server -n argocd -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' || echo "LoadBalancer pending..."
+          LB_URL=$(kubectl get svc argocd-server -n argocd -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' || echo "")
+          if [ -n "$LB_URL" ]; then
+            echo "http://$LB_URL"
+            echo "https://$LB_URL"
+            echo ""
+            echo "Note: NLB may take 2-5 minutes to fully provision. If connection fails, wait and try again."
+            echo "You can also use port-forward as a workaround:"
+            echo "  kubectl port-forward -n argocd svc/argocd-server 8080:80"
+          else
+            echo "LoadBalancer pending..."
+          fi
           echo ""
           echo "Argo CD Admin Password:"
           kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
+          echo ""
+          echo ""
+          echo "Waiting for NGINX hello world app to be deployed by Argo CD..."
+          sleep 30
+          echo ""
+          echo "NGINX Hello World App LoadBalancer:"
+          kubectl get svc nginx-hello -n apps -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' || echo "LoadBalancer pending (Argo CD may still be syncing)..."
           echo ""
 
