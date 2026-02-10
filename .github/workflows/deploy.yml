@@ -42,10 +42,7 @@ jobs:
         with:
           terraform_version: 1.6.0
 
-      - name: Configure kubectl
-        run: |
-          aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.CLUSTER_NAME }} --role-arn ${{ env.AWS_ROLE_ARN }}
-          kubectl cluster-info
+      # kubectl will be configured after Terraform adds role to aws-auth
 
       - name: Terraform Init - EKS
         working-directory: infra/eks
@@ -68,29 +65,7 @@ jobs:
         with:
           version: '3.13.0'
 
-      - name: Configure kubectl for Helm
-        run: |
-          mkdir -p ~/.kube
-          aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.CLUSTER_NAME }}
-          export KUBECONFIG=~/.kube/config
-          kubectl cluster-info
-          kubectl get nodes
-
-      - name: Add GitHub Actions role to aws-auth
-        run: |
-          export KUBECONFIG=~/.kube/config
-          # Add GitHub Actions role to aws-auth if not present
-          if ! kubectl get configmap aws-auth -n kube-system -o yaml | grep -q "GitHubActionsRole"; then
-            # Use kubectl patch to add the role
-            CURRENT=$(kubectl get configmap aws-auth -n kube-system -o jsonpath='{.data.mapRoles}')
-            ROLE_ARN="${{ env.AWS_ROLE_ARN }}"
-            # Build the new role entry using printf to avoid YAML parsing issues
-            NEW_ROLE=$(printf "\n- rolearn: %s\n  username: github-actions\n  groups:\n  - system:masters" "$ROLE_ARN")
-            kubectl patch configmap aws-auth -n kube-system --type merge \
-              -p "{\"data\":{\"mapRoles\":\"${CURRENT}${NEW_ROLE}\"}}"
-          else
-            echo "GitHub Actions role already in aws-auth"
-          fi
+      # GitHub Actions role is added to aws-auth by Terraform
 
       - name: Add Argo CD Helm repository
         run: helm repo add argo https://argoproj.github.io/argo-helm
@@ -98,10 +73,12 @@ jobs:
       - name: Update Helm repositories
         run: helm repo update
 
-      - name: Reconfigure kubectl with GitHub Actions role
+      - name: Configure kubectl (GitHub Actions role now in aws-auth)
         run: |
+          mkdir -p ~/.kube
+          # Don't use --role-arn since we're already authenticated as that role via OIDC
+          aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.CLUSTER_NAME }}
           export KUBECONFIG=~/.kube/config
-          aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.CLUSTER_NAME }} --role-arn ${{ env.AWS_ROLE_ARN }}
           kubectl cluster-info
           kubectl get nodes
 

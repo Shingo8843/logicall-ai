@@ -224,10 +224,47 @@ provider "helm" {
   }
 }
 
+# Add GitHub Actions role to aws-auth ConfigMap
+data "aws_iam_role" "github_actions" {
+  name = "GitHubActionsRole"
+}
+
+# Get existing aws-auth ConfigMap
+data "kubernetes_config_map_v1" "aws_auth" {
+  metadata {
+    name      = "aws-auth"
+    namespace = "kube-system"
+  }
+  depends_on = [aws_eks_cluster.main]
+}
+
+# Update aws-auth ConfigMap to include GitHub Actions role
+resource "kubernetes_config_map_v1_data" "aws_auth" {
+  metadata {
+    name      = "aws-auth"
+    namespace = "kube-system"
+  }
+
+  data = {
+    mapRoles = yamlencode(concat(
+      try(yamldecode(data.kubernetes_config_map_v1.aws_auth.data["mapRoles"]), []),
+      [{
+        rolearn  = data.aws_iam_role.github_actions.arn
+        username = "github-actions"
+        groups   = ["system:masters"]
+      }]
+    ))
+  }
+
+  force = true
+
+  depends_on = [
+    aws_eks_cluster.main,
+    data.kubernetes_config_map_v1.aws_auth,
+  ]
+}
+
 # Note: apps namespace will be created by Argo CD root application
 # (which has CreateNamespace=true in syncOptions)
 # We don't need to create it here via Terraform to avoid Kubernetes API auth issues in CI
-
-# Note: GitHub Actions role will be added to aws-auth ConfigMap via workflow step
-# This avoids Terraform needing to manage the ConfigMap which already exists
 
