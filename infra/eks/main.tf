@@ -144,6 +144,20 @@ resource "aws_eks_fargate_profile" "apps" {
   tags = var.tags
 }
 
+# Fargate Profile for argocd namespace
+resource "aws_eks_fargate_profile" "argocd" {
+  cluster_name           = aws_eks_cluster.main.name
+  fargate_profile_name   = "argocd"
+  pod_execution_role_arn = aws_iam_role.fargate_pod_execution.arn
+  subnet_ids             = module.vpc.private_subnets
+
+  selector {
+    namespace = "argocd"
+  }
+
+  tags = var.tags
+}
+
 # Fargate Pod Execution Role
 resource "aws_iam_role" "fargate_pod_execution" {
   name = "${var.cluster_name}-fargate-pod-execution-role"
