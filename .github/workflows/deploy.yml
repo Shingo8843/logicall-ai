@@ -48,13 +48,32 @@ jobs:
         working-directory: infra/eks
         run: terraform init
 
+      - name: Check for existing cluster (debug)
+        run: |
+          echo "Checking if cluster already exists..."
+          aws eks describe-cluster --name ${{ env.CLUSTER_NAME }} --region ${{ env.AWS_REGION }} --query 'cluster.[name,status,createdAt]' --output table 2>&1 || echo "Cluster does not exist (this is expected for fresh deployments)"
+
       - name: Terraform Plan - EKS
         working-directory: infra/eks
         run: terraform plan -out=tfplan
 
       - name: Terraform Apply - EKS
         working-directory: infra/eks
-        run: terraform apply -auto-approve tfplan
+        timeout-minutes: 30
+        env:
+          TF_LOG: INFO
+        run: |
+          echo "Starting Terraform apply (EKS cluster creation can take 10-20 minutes)..."
+          echo "This step has a 30-minute timeout. EKS cluster creation typically takes 10-15 minutes."
+          terraform apply -auto-approve tfplan || {
+            EXIT_CODE=$?
+            echo "Terraform apply failed with exit code: $EXIT_CODE"
+            echo "Checking cluster status in AWS..."
+            aws eks describe-cluster --name ${{ env.CLUSTER_NAME }} --region ${{ env.AWS_REGION }} --query 'cluster.[name,status,createdAt,health.issues]' --output json || echo "Cluster may not exist or is still being created"
+            echo "Checking for any error messages in CloudWatch logs..."
+            aws logs tail /aws/eks/${{ env.CLUSTER_NAME }}/cluster --region ${{ env.AWS_REGION }} --since 30m --format short 2>&1 | tail -50 || echo "Could not retrieve logs"
+            exit $EXIT_CODE
+          }
 
       - name: Configure kubectl (GitHub Actions role now in aws-auth)
         run: |
