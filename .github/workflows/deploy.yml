@@ -31,6 +31,11 @@ jobs:
           role-to-assume: ${{ env.AWS_ROLE_ARN }}
           role-session-name: GitHubActions-Deploy
           aws-region: ${{ env.AWS_REGION }}
+          
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'latest'
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -39,7 +44,8 @@ jobs:
 
       - name: Configure kubectl
         run: |
-          aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.CLUSTER_NAME }}
+          aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.CLUSTER_NAME }} --role-arn ${{ env.AWS_ROLE_ARN }}
+          kubectl cluster-info
 
       - name: Terraform Init - EKS
         working-directory: infra/eks
@@ -62,13 +68,48 @@ jobs:
         with:
           version: '3.13.0'
 
+      - name: Configure kubectl for Helm
+        run: |
+          mkdir -p ~/.kube
+          aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.CLUSTER_NAME }}
+          export KUBECONFIG=~/.kube/config
+          kubectl cluster-info
+          kubectl get nodes
+
+      - name: Add GitHub Actions role to aws-auth
+        run: |
+          export KUBECONFIG=~/.kube/config
+          # Add GitHub Actions role to aws-auth if not present
+          if ! kubectl get configmap aws-auth -n kube-system -o yaml | grep -q "GitHubActionsRole"; then
+            # Use kubectl patch to add the role
+            CURRENT=$(kubectl get configmap aws-auth -n kube-system -o jsonpath='{.data.mapRoles}')
+            NEW_ROLE="
+- rolearn: ${{ env.AWS_ROLE_ARN }}
+  username: github-actions
+  groups:
+  - system:masters"
+            kubectl patch configmap aws-auth -n kube-system --type merge \
+              -p "{\"data\":{\"mapRoles\":\"${CURRENT}${NEW_ROLE}\"}}"
+          else
+            echo "GitHub Actions role already in aws-auth"
+          fi
+
       - name: Add Argo CD Helm repository
         run: helm repo add argo https://argoproj.github.io/argo-helm
 
       - name: Update Helm repositories
         run: helm repo update
 
+      - name: Reconfigure kubectl with GitHub Actions role
+        run: |
+          export KUBECONFIG=~/.kube/config
+          aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.CLUSTER_NAME }} --role-arn ${{ env.AWS_ROLE_ARN }}
+          kubectl cluster-info
+          kubectl get nodes
+
       - name: Install Argo CD
+        env:
+          KUBECONFIG: ~/.kube/config
         run: |
           helm upgrade --install argocd argo/argo-cd \
             --namespace argocd \

@@ -228,3 +228,6 @@ provider "helm" {
 # (which has CreateNamespace=true in syncOptions)
 # We don't need to create it here via Terraform to avoid Kubernetes API auth issues in CI
 
+# Note: GitHub Actions role will be added to aws-auth ConfigMap via workflow step
+# This avoids Terraform needing to manage the ConfigMap which already exists
+
