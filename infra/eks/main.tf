@@ -224,17 +224,7 @@ provider "helm" {
   }
 }
 
-# Create apps namespace
-resource "kubernetes_namespace" "apps" {
-  metadata {
-    name = "apps"
-    labels = {
-      name = "apps"
-    }
-  }
-
-  depends_on = [
-    aws_eks_fargate_profile.apps,
-  ]
-}
+# Note: apps namespace will be created by Argo CD root application
+# (which has CreateNamespace=true in syncOptions)
+# We don't need to create it here via Terraform to avoid Kubernetes API auth issues in CI
 
