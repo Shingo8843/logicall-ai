@@ -181,3 +181,5 @@ jobs:
           kubectl get svc nginx-hello -n apps -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' || echo "LoadBalancer pending (Argo CD may still be syncing)..."
           echo ""
 
+
+          
