@@ -76,8 +76,8 @@ jobs:
           IMAGE_URI: ${{ steps.build-image.outputs.image_uri }}
           ACCOUNT_ID: ${{ steps.get-account-id.outputs.account_id }}
         run: |
-          # Replace the image in deployment.yaml
-          sed -i "s|YOUR_ACCOUNT_ID.dkr.ecr.us-west-2.amazonaws.com/backend:REPLACE_ME|$IMAGE_URI|g" gitops/apps/backend/deployment.yaml
+          # Replace the image in deployment.yaml (match any region in placeholder)
+          sed -i "s|YOUR_ACCOUNT_ID.dkr.ecr.[^/]*/backend:REPLACE_ME|$IMAGE_URI|g" gitops/apps/backend/deployment.yaml
           
           # Verify the change
           echo "Updated deployment.yaml:"
