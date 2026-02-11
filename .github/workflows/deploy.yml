@@ -342,7 +342,23 @@ jobs:
           echo "Waiting for root-app to sync..."
           # Give Argo CD a moment to pick up the new file
           sleep 20
-          kubectl wait --for=condition=healthy application/root-app -n argocd --timeout=300s || echo "Wait timed out, but proceeding to status check..."
+          
+          # Check if application exists and show status
+          if kubectl get application root-app -n argocd &>/dev/null; then
+            echo "Root-app application found. Checking sync status..."
+            kubectl get application root-app -n argocd -o wide
+            echo ""
+            echo "Waiting for application to become healthy..."
+            kubectl wait --for=condition=healthy application/root-app -n argocd --timeout=300s || {
+              echo "Wait timed out. Showing current status:"
+              kubectl get application root-app -n argocd -o yaml | grep -A 10 "status:" || true
+              echo ""
+              echo "Note: If sync status is 'Unknown', Argo CD may need Git repository credentials configured."
+              echo "Check Argo CD UI for detailed error messages."
+            }
+          else
+            echo "Warning: root-app application not found after apply"
+          fi
 
       - name: Final Status and Credentials
         run: |
@@ -353,5 +369,15 @@ jobs:
           echo "Argo CD Admin Password:"
           kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
           echo ""
-          echo "Nginx App URL:"
-          kubectl get svc nginx-hello -n apps -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' || echo "Pending..."
+          echo ""
+          echo "Checking root-app sync status..."
+          kubectl get application root-app -n argocd -o jsonpath='{.status.sync.status}' || echo "Application not found"
+          echo ""
+          kubectl get application root-app -n argocd -o jsonpath='{.status.health.status}' || echo ""
+          echo ""
+          echo "Backend Service URL (if deployed):"
+          kubectl get svc backend -n apps -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "Service not ready yet (Argo CD may still be syncing)"
+          echo ""
+          echo ""
+          echo "Note: If root-app shows 'Unknown' or 'Degraded', check Argo CD UI for details."
+          echo "The app may need Git repository access configured in Argo CD."
