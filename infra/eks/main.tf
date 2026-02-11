@@ -16,14 +16,13 @@ terraform {
     }
   }
 
-  # Backend configuration - update this after bootstrap
-  # backend "s3" {
-  #   bucket         = "REPLACE_WITH_STATE_BUCKET"
-  #   key            = "eks/terraform.tfstate"
-  #   region         = "REPLACE_WITH_REGION"
-  #   dynamodb_table = "REPLACE_WITH_LOCK_TABLE"
-  #   encrypt        = true
-  # }
+  backend "s3" {
+    bucket         = "logicall-ai-terraform-state-494777943750"
+    key            = "eks/terraform.tfstate"
+    region         = "us-east-1"
+    dynamodb_table = "logicall-ai-terraform-locks"
+    encrypt        = true
+  }
 }
 
 provider "aws" {
