@@ -306,10 +306,17 @@ jobs:
           kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
           
           echo "Waiting for Argo CD to be ready..."
-          kubectl wait --for=condition=available deployment/argocd-server -n argocd --timeout=300s
+          # Don't fail the whole workflow if Argo CD takes longer; core pods are checked later
+          kubectl wait --for=condition=available deployment/argocd-server -n argocd --timeout=300s || echo "Argo CD server not ready within timeout, continuing..."
           
           echo "Exposing Argo CD UI via LoadBalancer..."
           kubectl patch svc argocd-server -n argocd -p '{"spec": {"type": "LoadBalancer"}}'
+
+      - name: Remove Argo CD ApplicationSet (optional component)
+        run: |
+          echo "Removing Argo CD ApplicationSet controller and CRD (not needed for this setup)..."
+          kubectl delete deployment argocd-applicationset-controller -n argocd --ignore-not-found
+          kubectl delete crd applicationsets.argoproj.io --ignore-not-found
 
       - name: Apply Argo CD root application
         run: |
