@@ -13,7 +13,7 @@ permissions:
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
   CLUSTER_NAME: ${{ vars.CLUSTER_NAME || 'logicall-ai-cluster' }}
-  AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN  }}
+  AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
 
 jobs:
   deploy:
@@ -48,7 +48,7 @@ jobs:
 
       - name: Terraform Apply - EKS
         working-directory: infra/eks
-        timeout-minutes: 30
+        timeout-minutes: 45
         run: terraform apply -auto-approve
 
       - name: Configure kubectl

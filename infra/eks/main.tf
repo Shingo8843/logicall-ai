@@ -167,12 +167,12 @@ resource "aws_eks_node_group" "main" {
     max_unavailable = 1
   }
 
-  # Ensure that CoreDNS is running before nodes are created
+  # IAM policies must be attached before node group creation
   depends_on = [
     aws_iam_role_policy_attachment.node_group_AmazonEKSWorkerNodePolicy,
     aws_iam_role_policy_attachment.node_group_AmazonEKS_CNI_Policy,
     aws_iam_role_policy_attachment.node_group_AmazonEC2ContainerRegistryReadOnly,
-    aws_eks_addon.coredns,
+    aws_eks_addon.vpc_cni,
   ]
 
   tags = var.tags
@@ -184,6 +184,11 @@ resource "aws_eks_addon" "coredns" {
   addon_name               = "coredns"
   addon_version            = "v1.11.1-eksbuild.4"
   resolve_conflicts_on_update = "OVERWRITE"
+
+  # CoreDNS needs nodes to run, so install after node group is ready
+  depends_on = [
+    aws_eks_node_group.main,
+  ]
 
   tags = var.tags
 }
