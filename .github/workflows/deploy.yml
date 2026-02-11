@@ -54,6 +54,24 @@ jobs:
           terraform init
           # If migrating from local to S3 backend, migrate state
           terraform init -migrate-state -input=false || echo "Backend already configured or no migration needed"
+          
+      - name: Clean up stale state (if cluster doesn't exist)
+        working-directory: infra/eks
+        continue-on-error: true
+        run: |
+          echo "=== Checking for stale state ==="
+          CLUSTER_EXISTS=$(aws eks describe-cluster --name ${{ env.CLUSTER_NAME }} --region ${{ env.AWS_REGION }} --query 'cluster.status' --output text 2>&1 || echo "NOT_FOUND")
+          
+          if [ "$CLUSTER_EXISTS" != "ACTIVE" ]; then
+            echo "Cluster does not exist. Cleaning up stale Kubernetes resources from state..."
+            # Remove Kubernetes resources from state if they exist
+            terraform state rm kubernetes_config_map_v1_data.aws_auth 2>/dev/null || echo "kubernetes_config_map_v1_data.aws_auth not in state"
+            terraform state rm data.kubernetes_config_map_v1.aws_auth 2>/dev/null || echo "data.kubernetes_config_map_v1.aws_auth not in state"
+            terraform state rm data.aws_eks_cluster_auth.main 2>/dev/null || echo "data.aws_eks_cluster_auth.main not in state"
+            echo "State cleanup completed"
+          else
+            echo "Cluster exists, skipping state cleanup"
+          fi
 
       - name: Destroy existing resources (if requested)
         if: github.event.inputs.destroy_first == 'true'

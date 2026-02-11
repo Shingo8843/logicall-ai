@@ -6,14 +6,15 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
-    kubernetes = {
-      source  = "hashicorp/kubernetes"
-      version = "~> 2.23"
-    }
-    helm = {
-      source  = "hashicorp/helm"
-      version = "~> 2.11"
-    }
+    # Temporarily commented out - uncomment when Kubernetes resources are enabled
+    # kubernetes = {
+    #   source  = "hashicorp/kubernetes"
+    #   version = "~> 2.23"
+    # }
+    # helm = {
+    #   source  = "hashicorp/helm"
+    #   version = "~> 2.11"
+    # }
   }
 
   backend "s3" {
@@ -234,48 +235,50 @@ resource "aws_security_group_rule" "cluster_ingress_https" {
 
 # Kubernetes provider (for post-creation resources)
 # Use exec-based auth to avoid dependency on cluster resource during import
-data "aws_eks_cluster_auth" "main" {
-  name = aws_eks_cluster.main.name
-}
+# TEMPORARILY COMMENTED OUT - Uncomment after cluster is recreated
+# Note: Providers must be uncommented when Kubernetes resources are enabled
+# data "aws_eks_cluster_auth" "main" {
+#   name = aws_eks_cluster.main.name
+# }
 
-provider "kubernetes" {
-  host                   = aws_eks_cluster.main.endpoint
-  cluster_ca_certificate = base64decode(aws_eks_cluster.main.certificate_authority[0].data)
-  
-  # Use exec-based authentication (more flexible during imports)
-  exec {
-    api_version = "client.authentication.k8s.io/v1beta1"
-    command     = "aws"
-    args = [
-      "eks",
-      "get-token",
-      "--cluster-name",
-      aws_eks_cluster.main.name,
-      "--region",
-      var.aws_region
-    ]
-  }
-}
+# provider "kubernetes" {
+#   host                   = aws_eks_cluster.main.endpoint
+#   cluster_ca_certificate = base64decode(aws_eks_cluster.main.certificate_authority[0].data)
+#   
+#   # Use exec-based authentication (more flexible during imports)
+#   exec {
+#     api_version = "client.authentication.k8s.io/v1beta1"
+#     command     = "aws"
+#     args = [
+#       "eks",
+#       "get-token",
+#       "--cluster-name",
+#       aws_eks_cluster.main.name,
+#       "--region",
+#       var.aws_region
+#     ]
+#   }
+# }
 
-provider "helm" {
-  kubernetes {
-    host                   = aws_eks_cluster.main.endpoint
-    cluster_ca_certificate = base64decode(aws_eks_cluster.main.certificate_authority[0].data)
-    
-    exec {
-      api_version = "client.authentication.k8s.io/v1beta1"
-      command     = "aws"
-      args = [
-        "eks",
-        "get-token",
-        "--cluster-name",
-        aws_eks_cluster.main.name,
-        "--region",
-        var.aws_region
-      ]
-    }
-  }
-}
+# provider "helm" {
+#   kubernetes {
+#     host                   = aws_eks_cluster.main.endpoint
+#     cluster_ca_certificate = base64decode(aws_eks_cluster.main.certificate_authority[0].data)
+#     
+#     exec {
+#       api_version = "client.authentication.k8s.io/v1beta1"
+#       command     = "aws"
+#       args = [
+#         "eks",
+#         "get-token",
+#         "--cluster-name",
+#         aws_eks_cluster.main.name,
+#         "--region",
+#         var.aws_region
+#       ]
+#     }
+#   }
+# }
 
 # Add GitHub Actions role to aws-auth ConfigMap
 data "aws_iam_role" "github_actions" {
@@ -283,64 +286,66 @@ data "aws_iam_role" "github_actions" {
 }
 
 # Get existing aws-auth ConfigMap
-data "kubernetes_config_map_v1" "aws_auth" {
-  metadata {
-    name      = "aws-auth"
-    namespace = "kube-system"
-  }
-  depends_on = [aws_eks_cluster.main]
-}
+# TEMPORARILY COMMENTED OUT - Uncomment after cluster is recreated
+# data "kubernetes_config_map_v1" "aws_auth" {
+#   metadata {
+#     name      = "aws-auth"
+#     namespace = "kube-system"
+#   }
+#   depends_on = [aws_eks_cluster.main]
+# }
 
 # Update aws-auth ConfigMap to include node group and GitHub Actions role
-resource "kubernetes_config_map_v1_data" "aws_auth" {
-  metadata {
-    name      = "aws-auth"
-    namespace = "kube-system"
-  }
-
-  data = {
-    mapRoles = yamlencode(concat(
-      try(yamldecode(data.kubernetes_config_map_v1.aws_auth.data["mapRoles"]), []),
-      [
-        {
-          rolearn  = aws_iam_role.node_group.arn
-          username = "system:node:{{EC2PrivateDNSName}}"
-          groups   = ["system:bootstrappers", "system:nodes"]
-        },
-        {
-          rolearn  = data.aws_iam_role.github_actions.arn
-          username = "github-actions"
-          groups   = ["system:masters"]
-        }
-      ]
-    ))
-
-    # Grant direct cluster-admin access to IAM user Shingo
-    mapUsers = yamlencode(concat(
-      try(
-        yamldecode(
-          lookup(data.kubernetes_config_map_v1.aws_auth.data, "mapUsers", "[]")
-        ),
-        []
-      ),
-      [
-        {
-          userarn  = "arn:aws:iam::494777943750:user/Shingo"
-          username = "shingo"
-          groups   = ["system:masters"]
-        }
-      ]
-    ))
-  }
-
-  force = true
-
-  depends_on = [
-    aws_eks_cluster.main,
-    aws_eks_node_group.main,
-    data.kubernetes_config_map_v1.aws_auth,
-  ]
-}
+# TEMPORARILY COMMENTED OUT - Uncomment after cluster is recreated
+# resource "kubernetes_config_map_v1_data" "aws_auth" {
+#   metadata {
+#     name      = "aws-auth"
+#     namespace = "kube-system"
+#   }
+#
+#   data = {
+#     mapRoles = yamlencode(concat(
+#       try(yamldecode(data.kubernetes_config_map_v1.aws_auth.data["mapRoles"]), []),
+#       [
+#         {
+#           rolearn  = aws_iam_role.node_group.arn
+#           username = "system:node:{{EC2PrivateDNSName}}"
+#           groups   = ["system:bootstrappers", "system:nodes"]
+#         },
+#         {
+#           rolearn  = data.aws_iam_role.github_actions.arn
+#           username = "github-actions"
+#           groups   = ["system:masters"]
+#         }
+#       ]
+#     ))
+#
+#     # Grant direct cluster-admin access to IAM user Shingo
+#     mapUsers = yamlencode(concat(
+#       try(
+#         yamldecode(
+#           lookup(data.kubernetes_config_map_v1.aws_auth.data, "mapUsers", "[]")
+#         ),
+#         []
+#       ),
+#       [
+#         {
+#           userarn  = "arn:aws:iam::494777943750:user/Shingo"
+#           username = "shingo"
+#           groups   = ["system:masters"]
+#         }
+#       ]
+#     ))
+#   }
+#
+#   force = true
+#
+#   depends_on = [
+#     aws_eks_cluster.main,
+#     aws_eks_node_group.main,
+#     data.kubernetes_config_map_v1.aws_auth,
+#   ]
+# }
 
 # Note: apps namespace will be created by Argo CD root application
 # (which has CreateNamespace=true in syncOptions)
