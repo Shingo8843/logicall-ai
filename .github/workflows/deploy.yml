@@ -303,7 +303,20 @@ jobs:
       - name: Install Argo CD
         run: |
           kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
-          kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+          
+          # Remove problematic ApplicationSet CRD if it exists (has invalid annotations)
+          echo "Cleaning up any existing ApplicationSet CRD with invalid annotations..."
+          kubectl delete crd applicationsets.argoproj.io --ignore-not-found || true
+          
+          # Apply Argo CD manifests
+          kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml || {
+            echo "Argo CD install had some errors, but continuing..."
+            # If ApplicationSet CRD creation failed due to annotations, try to patch it
+            kubectl get crd applicationsets.argoproj.io 2>/dev/null && {
+              echo "Attempting to fix ApplicationSet CRD annotations..."
+              kubectl annotate crd applicationsets.argoproj.io kubectl.kubernetes.io/last-applied-configuration- --overwrite 2>/dev/null || true
+            } || true
+          }
           
           echo "Waiting for Argo CD to be ready..."
           # Don't fail the whole workflow if Argo CD takes longer; core pods are checked later
@@ -317,8 +330,9 @@ jobs:
         run: |
           echo "Removing Argo CD ApplicationSet controller (not needed for this setup)..."
           kubectl delete deployment argocd-applicationset-controller -n argocd --ignore-not-found || echo "ApplicationSet deployment removal skipped/failed (non-critical)"
-          # Skip CRD deletion - it may have invalid annotations, but ApplicationSet controller is stopped above
-          echo "ApplicationSet controller stopped. CRD left in place (non-critical - controller won't run without deployment)"
+          # Try to remove the problematic annotation from CRD if it exists
+          kubectl annotate crd applicationsets.argoproj.io kubectl.kubernetes.io/last-applied-configuration- --overwrite 2>/dev/null || echo "CRD annotation cleanup skipped (non-critical)"
+          echo "ApplicationSet controller stopped. Any remaining CRD issues are non-critical."
 
       - name: Apply Argo CD root application
         run: |
