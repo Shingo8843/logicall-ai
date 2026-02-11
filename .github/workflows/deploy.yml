@@ -46,6 +46,23 @@ jobs:
         working-directory: infra/eks
         run: terraform init
 
+      - name: Import existing resources (if any)
+        working-directory: infra/eks
+        continue-on-error: true
+        run: |
+          # Import CloudWatch log group
+          terraform import aws_cloudwatch_log_group.cluster /aws/eks/${{ env.CLUSTER_NAME }}/cluster 2>/dev/null || echo "Log group already in state or doesn't exist"
+          
+          # Import IAM roles
+          terraform import aws_iam_role.cluster ${{ env.CLUSTER_NAME }}-cluster-role 2>/dev/null || echo "Cluster role already in state or doesn't exist"
+          terraform import aws_iam_role.node_group ${{ env.CLUSTER_NAME }}-node-group-role 2>/dev/null || echo "Node group role already in state or doesn't exist"
+          
+          # Import EKS cluster (this will also import dependent resources)
+          terraform import aws_eks_cluster.main ${{ env.CLUSTER_NAME }} 2>/dev/null || echo "Cluster already in state or doesn't exist"
+          
+          # Refresh state to sync with actual resources
+          terraform refresh -auto-approve || true
+
       - name: Terraform Apply - EKS
         working-directory: infra/eks
         timeout-minutes: 45
