@@ -233,6 +233,7 @@ resource "aws_security_group_rule" "cluster_ingress_https" {
 }
 
 # Kubernetes provider (for post-creation resources)
+# Use exec-based auth to avoid dependency on cluster resource during import
 data "aws_eks_cluster_auth" "main" {
   name = aws_eks_cluster.main.name
 }
@@ -240,14 +241,39 @@ data "aws_eks_cluster_auth" "main" {
 provider "kubernetes" {
   host                   = aws_eks_cluster.main.endpoint
   cluster_ca_certificate = base64decode(aws_eks_cluster.main.certificate_authority[0].data)
-  token                  = data.aws_eks_cluster_auth.main.token
+  
+  # Use exec-based authentication (more flexible during imports)
+  exec {
+    api_version = "client.authentication.k8s.io/v1beta1"
+    command     = "aws"
+    args = [
+      "eks",
+      "get-token",
+      "--cluster-name",
+      aws_eks_cluster.main.name,
+      "--region",
+      var.aws_region
+    ]
+  }
 }
 
 provider "helm" {
   kubernetes {
     host                   = aws_eks_cluster.main.endpoint
     cluster_ca_certificate = base64decode(aws_eks_cluster.main.certificate_authority[0].data)
-    token                  = data.aws_eks_cluster_auth.main.token
+    
+    exec {
+      api_version = "client.authentication.k8s.io/v1beta1"
+      command     = "aws"
+      args = [
+        "eks",
+        "get-token",
+        "--cluster-name",
+        aws_eks_cluster.main.name,
+        "--region",
+        var.aws_region
+      ]
+    }
   }
 }
 

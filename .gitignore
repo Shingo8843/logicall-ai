@@ -14,7 +14,7 @@ terraform.rc
 *.log
 .DS_Store
 Thumbs.db
-
+*.ps1
 # Ignore all .md files except README.md
 *.md
 !README.md

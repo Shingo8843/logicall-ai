@@ -5,6 +5,18 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      destroy_first:
+        description: 'Destroy existing resources before creating new ones'
+        required: false
+        default: 'false'
+        type: boolean
+    inputs:
+      destroy_first:
+        description: 'Destroy existing resources before creating new ones'
+        required: false
+        default: 'false'
+        type: boolean
 
 permissions:
   id-token: write # Required for OIDC
@@ -49,11 +61,43 @@ jobs:
           # If migrating from local to S3 backend, migrate state
           terraform init -migrate-state -input=false || echo "Backend already configured or no migration needed"
 
+      - name: Destroy existing resources (if requested)
+        if: github.event.inputs.destroy_first == 'true'
+        working-directory: infra/eks
+        continue-on-error: true
+        run: |
+          echo "=== Destroying existing resources ==="
+          CLUSTER_EXISTS=$(aws eks describe-cluster --name ${{ env.CLUSTER_NAME }} --region ${{ env.AWS_REGION }} --query 'cluster.status' --output text 2>/dev/null || echo "NOT_FOUND")
+          if [ "$CLUSTER_EXISTS" = "ACTIVE" ]; then
+            echo "Cluster exists. Destroying all resources..."
+            terraform destroy -auto-approve -lock=false || echo "Destroy completed or failed"
+            echo "Waiting 30 seconds for resources to be fully deleted..."
+            sleep 30
+          else
+            echo "No existing cluster found, nothing to destroy"
+          fi
+
       - name: Import existing resources (if any)
         working-directory: infra/eks
         continue-on-error: true
         run: |
           echo "=== Importing existing resources ==="
+          
+          # Check if cluster exists - import it FIRST to satisfy provider dependencies
+          CLUSTER_STATUS=$(aws eks describe-cluster --name ${{ env.CLUSTER_NAME }} --region ${{ env.AWS_REGION }} --query 'cluster.status' --output text 2>/dev/null || echo "NOT_FOUND")
+          
+          if [ "$CLUSTER_STATUS" = "ACTIVE" ]; then
+            echo "Cluster is ACTIVE - importing cluster FIRST (required for Kubernetes provider)..."
+            
+            # Import cluster first - this allows Kubernetes provider to initialize properly
+            if terraform import -lock=false aws_eks_cluster.main "${{ env.CLUSTER_NAME }}" 2>&1; then
+              echo "✓ EKS cluster imported successfully"
+            elif terraform state show aws_eks_cluster.main >/dev/null 2>&1; then
+              echo "✓ EKS cluster already in state"
+            else
+              echo "⚠ Cluster import failed, but continuing with other resources..."
+            fi
+          fi
           
           # Function to import and verify
           import_and_verify() {
@@ -62,7 +106,7 @@ jobs:
             local resource_name=$3
             
             echo "Importing $resource_name..."
-            IMPORT_OUTPUT=$(terraform import $resource $import_id 2>&1)
+            IMPORT_OUTPUT=$(terraform import -lock=false $resource $import_id 2>&1)
             IMPORT_EXIT=$?
             
             if [ $IMPORT_EXIT -eq 0 ]; then
@@ -75,7 +119,7 @@ jobs:
                 return 0
               else
                 echo "✗ $resource_name import failed:"
-                echo "$IMPORT_OUTPUT"
+                echo "$IMPORT_OUTPUT" | head -5
                 return 1
               fi
             fi
@@ -88,12 +132,8 @@ jobs:
           import_and_verify aws_iam_role.cluster "${{ env.CLUSTER_NAME }}-cluster-role" "Cluster IAM role" || true
           import_and_verify aws_iam_role.node_group "${{ env.CLUSTER_NAME }}-node-group-role" "Node group IAM role" || true
           
-          # Import EKS cluster if it exists
-          CLUSTER_STATUS=$(aws eks describe-cluster --name ${{ env.CLUSTER_NAME }} --region ${{ env.AWS_REGION }} --query 'cluster.status' --output text 2>/dev/null || echo "NOT_FOUND")
+          # Continue with VPC imports if cluster exists
           if [ "$CLUSTER_STATUS" = "ACTIVE" ]; then
-            echo "Cluster is ACTIVE, importing cluster and VPC resources..."
-            
-            import_and_verify aws_eks_cluster.main "${{ env.CLUSTER_NAME }}" "EKS cluster" || true
             
             # Get VPC ID from cluster
             VPC_ID=$(aws eks describe-cluster --name ${{ env.CLUSTER_NAME }} --region ${{ env.AWS_REGION }} --query 'cluster.resourcesVpcConfig.vpcId' --output text)
