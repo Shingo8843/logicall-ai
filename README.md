@@ -1,296 +1,366 @@
-# Backend-only GitOps on EKS using GitHub Actions, Terraform, and Argo CD (Python)
-https://medium.com/%40neamulkabiremon/build-a-real-world-devops-pipeline-with-github-actions-terraform-eks-and-argo-cd-step-by-step-c568f1efd29e
-https://github.com/neamulkabiremon/ultimate-devops-project-demo
-This repository follows the same architecture and workflow described in the Medium article:
+# Logicall AI - EKS GitOps Pipeline
 
-> *Build a real-world DevOps pipeline with GitHub Actions, Terraform, EKS, and Argo CD*
+A complete DevOps pipeline for deploying a Python FastAPI backend to Amazon EKS using Terraform, GitHub Actions, and Argo CD.
 
-The only differences are:
+## 🏗️ Architecture
 
-* Python backend instead of Node.js
-* Backend-only service (no frontend)
-* Same CI-driven GitOps pattern where **CI updates manifests and Argo CD syncs**
+```
+┌─────────────────┐
+│  GitHub Repo    │
+│  (Source of     │
+│   Truth)        │
+└────────┬────────┘
+         │
+    ┌────┴────┐
+    │         │
+    ▼         ▼
+┌────────┐ ┌──────────────┐
+│  CI    │ │  Terraform   │
+│Pipeline│ │  (EKS)       │
+└────┬───┘ └──────┬───────┘
+     │            │
+     ▼            ▼
+┌──────────┐  ┌──────────┐
+│   ECR    │  │   EKS    │
+│ (Images) │  │ (Cluster)│
+└────┬─────┘  └────┬─────┘
+     │             │
+     └──────┬──────┘
+            ▼
+      ┌──────────┐
+      │ Argo CD  │
+      │ (GitOps) │
+      └────┬─────┘
+           │
+           ▼
+      ┌──────────┐
+      │ Backend  │
+      │  Pods    │
+      └──────────┘
+```
 
----
+### Components
 
-## Architecture (same as the Medium article)
+1. **Terraform** - Provisions EKS cluster, VPC, IAM roles, and networking
+2. **GitHub Actions CI** - Builds Docker images, pushes to ECR, updates manifests
+3. **Argo CD** - GitOps controller that syncs Kubernetes manifests from Git
+4. **AWS EKS** - Managed Kubernetes cluster
+5. **AWS ECR** - Container registry for Docker images
 
-1. **Terraform** provisions the EKS cluster
-2. **GitHub Actions (CI)**:
+## 📋 Prerequisites
 
-   * builds a Docker image
-   * pushes it to Amazon ECR
-   * updates the Kubernetes manifest with the new image tag
-3. **Argo CD**:
+- AWS Account with appropriate permissions
+- GitHub repository (public or private)
+- GitHub repository variables configured:
+  - `AWS_ROLE_ARN` - IAM role ARN for GitHub Actions OIDC
+  - `AWS_REGION` (optional, defaults to `us-east-1`)
+  - `CLUSTER_NAME` (optional, defaults to `logicall-ai-cluster`)
+- Terraform >= 1.6 (for local runs)
+- AWS CLI configured (for local kubectl access)
+- kubectl installed (for local access)
 
-   * watches the Git repository
-   * syncs Kubernetes manifests to the cluster automatically
+## 🚀 Quick Start
 
-Git is the single source of truth.
+### 1. Configure GitHub Variables
 
----
+Go to **Settings → Secrets and variables → Actions → Variables** and set:
 
-## Repository structure
+- `AWS_ROLE_ARN`: `arn:aws:iam::YOUR_ACCOUNT_ID:role/GitHubActionsRole`
+- `AWS_REGION`: `us-east-1` (optional)
+- `CLUSTER_NAME`: `logicall-ai-cluster` (optional)
+
+### 2. Deploy Infrastructure
+
+The infrastructure is deployed automatically via GitHub Actions when you push to `main`, or you can trigger it manually:
+
+1. Go to **Actions → Deploy EKS Cluster and Argo CD**
+2. Click **Run workflow**
+3. Wait for deployment (~7-10 minutes)
+
+### 3. Access Services
+
+After deployment, get your service URLs:
+
+**Option 1: From GitHub Actions**
+- Go to the latest workflow run
+- Expand "Final Status and Credentials" step
+- Copy the Argo CD URL and password
+
+**Option 2: Using kubectl**
+```bash
+# Get Argo CD URL
+kubectl get svc argocd-server -n argocd -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
+
+# Get Argo CD password
+kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
+
+# Get Backend URL
+kubectl get svc backend -n apps -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
+```
+
+**Option 3: Use the helper script**
+```powershell
+powershell -ExecutionPolicy Bypass -File get-urls.ps1
+```
+
+### 4. Deploy Backend Application
+
+The backend is automatically deployed when you:
+
+1. Push changes to `app/`, `Dockerfile`, or `requirements.txt`
+2. Or manually trigger **Actions → CI - Build and Deploy Backend**
+
+The CI pipeline will:
+- Build Docker image
+- Push to ECR
+- Update `gitops/apps/backend/deployment.yaml` with new image tag
+- Commit and push the change
+- Argo CD automatically syncs the new image to the cluster
+
+## 📁 Repository Structure
 
 ```
 .
-├── app/                         # Python backend source
-│   └── main.py
-├── Dockerfile
-├── requirements.txt
+├── app/                          # Python FastAPI backend
+│   └── main.py                   # FastAPI application
+├── Dockerfile                    # Container image definition
+├── requirements.txt              # Python dependencies
 │
-├── infra/
-│   └── eks/                     # Terraform (same role as Medium article)
+├── infra/                        # Infrastructure as Code
+│   └── eks/
+│       ├── main.tf               # EKS cluster, VPC, IAM
+│       ├── variables.tf         # Terraform variables
+│       └── terraform.tfvars     # Variable values
 │
-├── gitops/
+├── gitops/                       # GitOps manifests
 │   ├── argocd/
 │   │   └── root-app.yaml        # Argo CD Application
 │   └── apps/
 │       └── backend/
-│           ├── namespace.yaml
-│           ├── deployment.yaml
-│           └── service.yaml
+│           ├── deployment.yaml  # Kubernetes Deployment
+│           ├── service.yaml      # Kubernetes Service
+│           └── namespace.yaml   # Namespace definition
 │
-└── .github/
-    └── workflows/
-        ├── deploy-eks.yaml      # EKS + Argo CD bootstrap (your existing one)
-        └── ci-backend.yaml      # Build, push, update manifest
+├── .github/
+│   └── workflows/
+│       ├── deploy.yml           # EKS + Argo CD deployment
+│       └── ci-backend.yaml     # CI pipeline (build & deploy)
+│
+└── *.ps1                         # Helper scripts (Windows)
 ```
 
-This mirrors the Medium article’s “infra + app + gitops” separation.
+## 🔄 Deployment Flow
 
----
-
-## Prerequisites
-
-Before starting, make sure you have:
-
-* AWS account
-* IAM role for GitHub OIDC (same as Medium article)
-* GitHub repository (public or private)
-* Terraform >= 1.6
-* AWS CLI configured locally (for first run only)
-
----
-
-## Step 1: Provision EKS (same as Medium article)
-
-Terraform lives in:
+### Initial Setup (One-time)
 
 ```
-infra/eks
+GitHub Actions (deploy.yml)
+    ↓
+Terraform Apply
+    ↓
+EKS Cluster Created
+    ↓
+Argo CD Installed
+    ↓
+root-app Applied
+    ↓
+Backend Namespace Created
 ```
 
-Run locally once if desired:
+### Application Updates (Every Push)
+
+```
+Code Change in app/
+    ↓
+GitHub Actions (ci-backend.yaml)
+    ↓
+Build Docker Image
+    ↓
+Push to ECR
+    ↓
+Update deployment.yaml (Git)
+    ↓
+Argo CD Detects Change
+    ↓
+Sync to Cluster
+    ↓
+New Pods Running
+```
+
+## 🔐 Accessing the Cluster
+
+### Configure kubectl
 
 ```bash
-cd infra/eks
-terraform init
-terraform apply
+aws eks update-kubeconfig \
+  --region us-east-1 \
+  --name logicall-ai-cluster \
+  --role-arn arn:aws:iam::YOUR_ACCOUNT_ID:role/GitHubActionsRole
 ```
 
-Or let GitHub Actions run the **deploy-eks.yaml** workflow.
+**Note:** Your IAM user needs permission to assume `GitHubActionsRole`, or you can access directly if your user is added to `aws-auth` ConfigMap.
 
-This workflow:
-
-* creates the EKS cluster
-* installs Argo CD
-* applies `gitops/argocd/root-app.yaml`
-
-No application code is deployed yet.
-
----
-
-## Step 2: Python backend (minimal)
-
-`app/main.py`
-
-```python
-from fastapi import FastAPI
-
-app = FastAPI()
-
-@app.get("/health")
-def health():
-    return {"ok": True}
-```
-
-`requirements.txt`
-
-```txt
-fastapi
-uvicorn[standard]
-```
-
-`Dockerfile`
-
-```dockerfile
-FROM python:3.12-slim
-
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY app ./app
-EXPOSE 8000
-CMD ["uvicorn", "app.main:app", "--host=0.0.0.0", "--port=8000"]
-```
-
-This directly replaces the Node app in the Medium tutorial.
-
----
-
-## Step 3: Kubernetes manifests (GitOps source of truth)
-
-`gitops/apps/backend/deployment.yaml`
-
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: backend
-  namespace: apps
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: backend
-  template:
-    metadata:
-      labels:
-        app: backend
-    spec:
-      containers:
-        - name: backend
-          image: YOUR_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/backend:REPLACE_ME
-          ports:
-            - containerPort: 8000
-```
-
-`gitops/apps/backend/service.yaml`
-
-```yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: backend
-  namespace: apps
-spec:
-  selector:
-    app: backend
-  ports:
-    - port: 80
-      targetPort: 8000
-  type: ClusterIP
-```
-
-`gitops/apps/backend/namespace.yaml`
-
-```yaml
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: apps
-```
-
-This is identical in spirit to the Medium article’s manifests.
-
----
-
-## Step 4: Argo CD Application (same model as Medium)
-
-`gitops/argocd/root-app.yaml`
-
-```yaml
-apiVersion: argoproj.io/v1alpha1
-kind: Application
-metadata:
-  name: backend
-  namespace: argocd
-spec:
-  project: default
-  source:
-    repoURL: https://github.com/YOUR_ORG/YOUR_REPO.git
-    targetRevision: main
-    path: gitops/apps/backend
-  destination:
-    server: https://kubernetes.default.svc
-    namespace: apps
-  syncPolicy:
-    automated:
-      prune: true
-      selfHeal: true
-    syncOptions:
-      - CreateNamespace=true
-```
-
-This is the same “CI commits → Argo CD syncs” pattern used in the Medium article.
-
----
-
-## Step 5: CI pipeline (standard GitOps)
-
-`.github/workflows/ci-backend.yaml`
-
-What it does:
-
-1. Build Python image
-2. Push to Amazon ECR
-3. Update `deployment.yaml` image tag
-4. Commit the change back to Git
-
-This is the **standard CI-driven GitOps pattern** and matches the article’s intent exactly.
-
-Once this runs:
-
-* Git changes
-* Argo CD detects the change
-* Backend is deployed
-
----
-
-## How deployments work (important)
-
-* **Do not kubectl apply app manifests manually**
-* **Do not change image tags by hand**
-
-Deployment flow:
-
-```
-git push → GitHub Actions → Git commit → Argo CD sync
-```
-
-Rollback:
+### Verify Access
 
 ```bash
-git revert <commit>
+kubectl get nodes
+kubectl get pods -n apps
+kubectl get application root-app -n argocd
 ```
 
+## 🌐 Service URLs
+
+After deployment, you'll have:
+
+- **Argo CD UI**: `https://<loadbalancer-dns>`
+  - Username: `admin`
+  - Password: (from workflow output or kubectl command above)
+
+- **Backend API**: `http://<loadbalancer-dns>`
+  - Health endpoint: `http://<loadbalancer-dns>/health`
+
+## 🛠️ Helper Scripts
+
+### Windows PowerShell Scripts
+
+- `get-urls.ps1` - Get all service URLs and credentials
+- `destroy-all.ps1` - Destroy all Terraform-managed resources
+- `cleanup-orphaned-resources.ps1` - Clean up orphaned VPCs and resources
+- `cleanup-elastic-ips.ps1` - Release unassociated Elastic IPs
+- `check-costly-resources.ps1` - Check for resources that could cost money
+
+### Usage Examples
+
+```powershell
+# Get service URLs
+powershell -ExecutionPolicy Bypass -File get-urls.ps1
+
+# Destroy everything
+powershell -ExecutionPolicy Bypass -File destroy-all.ps1
+
+# Check for costly resources
+powershell -ExecutionPolicy Bypass -File check-costly-resources.ps1
+```
+
+## 🔧 Configuration
+
+### Terraform Variables
+
+Edit `infra/eks/terraform.tfvars` to customize:
+
+- Cluster name
+- Kubernetes version
+- Node group size
+- Instance types
+- VPC CIDR blocks
+
+### Backend Service
+
+The backend service is configured in `gitops/apps/backend/service.yaml`:
+
+- **Type**: `LoadBalancer` (exposes publicly)
+- **Port**: `80` → `8000` (container port)
+
+To change to `ClusterIP` (internal only), edit the service and commit.
+
+## 🐛 Troubleshooting
+
+### Argo CD Application Not Syncing
+
+1. Check Argo CD UI for error messages
+2. Verify Git repository is accessible (if private, configure credentials)
+3. Check application status:
+   ```bash
+   kubectl get application root-app -n argocd -o yaml
+   ```
+
+### Backend Pods Not Starting
+
+1. Check pod status:
+   ```bash
+   kubectl get pods -n apps
+   kubectl describe pod <pod-name> -n apps
+   kubectl logs <pod-name> -n apps
+   ```
+
+2. Verify image exists in ECR:
+   ```bash
+   aws ecr describe-images --repository-name backend --region us-east-1
+   ```
+
+3. Check deployment:
+   ```bash
+   kubectl get deployment backend -n apps -o yaml
+   ```
+
+### Cannot Access Cluster
+
+1. Verify AWS credentials:
+   ```bash
+   aws sts get-caller-identity
+   ```
+
+2. Update kubeconfig:
+   ```bash
+   aws eks update-kubeconfig --region us-east-1 --name logicall-ai-cluster
+   ```
+
+3. Check IAM permissions (user needs access in `aws-auth` ConfigMap)
+
+## 🧹 Cleanup
+
+### Destroy All Resources
+
+```powershell
+# Destroy Terraform-managed resources
+powershell -ExecutionPolicy Bypass -File destroy-all.ps1
+
+# Clean up orphaned resources
+powershell -ExecutionPolicy Bypass -File cleanup-orphaned-resources.ps1
+
+# Check for remaining costly resources
+powershell -ExecutionPolicy Bypass -File check-costly-resources.ps1
+```
+
+### Manual Cleanup
+
+If Terraform destroy fails:
+
+1. Delete EKS cluster:
+   ```bash
+   aws eks delete-cluster --name logicall-ai-cluster --region us-east-1
+   ```
+
+2. Wait for cluster deletion, then clean up VPCs using `cleanup-orphaned-resources.ps1`
+
+## 📝 Notes
+
+- **GitOps Principle**: Never manually `kubectl apply` application manifests. All changes go through Git.
+- **Image Updates**: CI pipeline automatically updates image tags. Manual edits will be overwritten.
+- **State Management**: Terraform state is stored in S3: `logicall-ai-terraform-state-<account-id>`
+- **Security**: No hardcoded credentials. All secrets use GitHub variables/secrets.
+
+## 🔒 Security Considerations
+
+- ✅ No hardcoded passwords or API keys
+- ✅ Uses GitHub OIDC for AWS authentication
+- ✅ Terraform state encrypted in S3
+- ✅ IAM roles follow least privilege
+- ⚠️ AWS Account ID visible in some files (acceptable for public repos)
+- ⚠️ IAM user names visible in Terraform config (low risk)
+
+## 📚 Additional Resources
+
+- [Terraform AWS EKS Module](https://registry.terraform.io/modules/terraform-aws-modules/eks/aws/)
+- [Argo CD Documentation](https://argo-cd.readthedocs.io/)
+- [FastAPI Documentation](https://fastapi.tiangolo.com/)
+- [AWS EKS Best Practices](https://aws.github.io/aws-eks-best-practices/)
+
+## 📄 License
+
+[Add your license here]
+
 ---
 
-## Common first-run checklist
+**Built with ❤️ using Terraform, GitHub Actions, Argo CD, and AWS EKS**
 
-Before triggering CI:
-
-* ECR repository `backend` exists
-* Argo CD can access the Git repository
-* `repoURL` in `root-app.yaml` is correct
-* AWS_REGION matches ECR and EKS
-
----
-
-## Why this matches the Medium article closely
-
-* Terraform still owns EKS
-* GitHub Actions still does build + deploy
-* Argo CD still reconciles Git state
-* No extra controllers or patterns added
-* Only language changed (Node → Python)
-
----
-
-If you want, next I can:
-
-* diff this against the Medium repo line-by-line
-* tighten it further to avoid any Argo CD edge cases
-* add an optional Ingress later without changing the core flow
