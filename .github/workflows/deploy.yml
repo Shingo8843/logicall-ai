@@ -313,10 +313,12 @@ jobs:
           kubectl patch svc argocd-server -n argocd -p '{"spec": {"type": "LoadBalancer"}}'
 
       - name: Remove Argo CD ApplicationSet (optional component)
+        continue-on-error: true
         run: |
-          echo "Removing Argo CD ApplicationSet controller and CRD (not needed for this setup)..."
-          kubectl delete deployment argocd-applicationset-controller -n argocd --ignore-not-found
-          kubectl delete crd applicationsets.argoproj.io --ignore-not-found
+          echo "Removing Argo CD ApplicationSet controller (not needed for this setup)..."
+          kubectl delete deployment argocd-applicationset-controller -n argocd --ignore-not-found || echo "ApplicationSet deployment removal skipped/failed (non-critical)"
+          # Skip CRD deletion - it may have invalid annotations, but ApplicationSet controller is stopped above
+          echo "ApplicationSet controller stopped. CRD left in place (non-critical - controller won't run without deployment)"
 
       - name: Apply Argo CD root application
         run: |
