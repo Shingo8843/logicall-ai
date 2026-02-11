@@ -50,82 +50,109 @@ jobs:
         working-directory: infra/eks
         continue-on-error: true
         run: |
-          # Import CloudWatch log group
-          terraform import aws_cloudwatch_log_group.cluster /aws/eks/${{ env.CLUSTER_NAME }}/cluster || echo "Log group already in state"
+          echo "Checking for existing resources to import..."
           
-          # Import IAM roles
-          terraform import aws_iam_role.cluster ${{ env.CLUSTER_NAME }}-cluster-role || echo "Cluster role already in state"
-          terraform import aws_iam_role.node_group ${{ env.CLUSTER_NAME }}-node-group-role || echo "Node group role already in state"
+          # Import CloudWatch log group (always try, ignore if already in state)
+          echo "Attempting to import CloudWatch log group..."
+          terraform import aws_cloudwatch_log_group.cluster /aws/eks/${{ env.CLUSTER_NAME }}/cluster 2>&1 || echo "Log group import skipped (may already be in state or not exist)"
           
-          # Import EKS cluster
-          terraform import aws_eks_cluster.main ${{ env.CLUSTER_NAME }} || echo "Cluster already in state"
+          # Import IAM roles (always try, ignore if already in state)
+          echo "Attempting to import IAM roles..."
+          terraform import aws_iam_role.cluster ${{ env.CLUSTER_NAME }}-cluster-role 2>&1 || echo "Cluster role import skipped"
+          terraform import aws_iam_role.node_group ${{ env.CLUSTER_NAME }}-node-group-role 2>&1 || echo "Node group role import skipped"
           
-          # Import VPC resources if cluster exists
-          if aws eks describe-cluster --name ${{ env.CLUSTER_NAME }} --region ${{ env.AWS_REGION }} --query 'cluster.status' --output text 2>/dev/null | grep -q "ACTIVE"; then
-            echo "Cluster exists, importing VPC resources..."
+          # Import EKS cluster if it exists
+          CLUSTER_STATUS=$(aws eks describe-cluster --name ${{ env.CLUSTER_NAME }} --region ${{ env.AWS_REGION }} --query 'cluster.status' --output text 2>/dev/null || echo "NOT_FOUND")
+          if [ "$CLUSTER_STATUS" = "ACTIVE" ]; then
+            echo "Cluster is ACTIVE, importing cluster and VPC resources..."
+            terraform import aws_eks_cluster.main ${{ env.CLUSTER_NAME }} 2>&1 || echo "Cluster import skipped"
+            
+            # Get VPC ID from cluster
             VPC_ID=$(aws eks describe-cluster --name ${{ env.CLUSTER_NAME }} --region ${{ env.AWS_REGION }} --query 'cluster.resourcesVpcConfig.vpcId' --output text)
+            echo "VPC ID: $VPC_ID"
             
             # Import VPC
-            terraform import 'module.vpc.aws_vpc.this[0]' $VPC_ID || echo "VPC already in state"
+            terraform import 'module.vpc.aws_vpc.this[0]' $VPC_ID 2>&1 || echo "VPC import skipped"
             
-            # Import subnets (matching by CIDR and AZ)
+            # Import subnets by CIDR block (most reliable)
+            echo "Importing subnets..."
             for SUBNET_ID in $(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" --region ${{ env.AWS_REGION }} --query 'Subnets[*].SubnetId' --output text); do
-              SUBNET_INFO=$(aws ec2 describe-subnets --subnet-ids $SUBNET_ID --region ${{ env.AWS_REGION }} --query 'Subnets[0].[AvailabilityZone,CidrBlock,Tags[?Key==`Name`].Value|[0]]' --output text)
-              AZ=$(echo $SUBNET_INFO | cut -f1)
-              CIDR=$(echo $SUBNET_INFO | cut -f2)
-              NAME=$(echo $SUBNET_INFO | cut -f3)
-              
-              if [[ "$NAME" == *"public-us-east-1a"* ]] || [[ "$CIDR" == "10.0.1.0/24" ]]; then
-                terraform import 'module.vpc.aws_subnet.public[0]' $SUBNET_ID || echo "Public subnet 0 already in state"
-              elif [[ "$NAME" == *"public-us-east-1b"* ]] || [[ "$CIDR" == "10.0.2.0/24" ]]; then
-                terraform import 'module.vpc.aws_subnet.public[1]' $SUBNET_ID || echo "Public subnet 1 already in state"
-              elif [[ "$NAME" == *"private-us-east-1a"* ]] || [[ "$CIDR" == "10.0.10.0/24" ]]; then
-                terraform import 'module.vpc.aws_subnet.private[0]' $SUBNET_ID || echo "Private subnet 0 already in state"
-              elif [[ "$NAME" == *"private-us-east-1b"* ]] || [[ "$CIDR" == "10.0.20.0/24" ]]; then
-                terraform import 'module.vpc.aws_subnet.private[1]' $SUBNET_ID || echo "Private subnet 1 already in state"
-              fi
+              CIDR=$(aws ec2 describe-subnets --subnet-ids $SUBNET_ID --region ${{ env.AWS_REGION }} --query 'Subnets[0].CidrBlock' --output text)
+              case "$CIDR" in
+                "10.0.1.0/24")
+                  terraform import 'module.vpc.aws_subnet.public[0]' $SUBNET_ID 2>&1 || echo "Public subnet 0 import skipped"
+                  ;;
+                "10.0.2.0/24")
+                  terraform import 'module.vpc.aws_subnet.public[1]' $SUBNET_ID 2>&1 || echo "Public subnet 1 import skipped"
+                  ;;
+                "10.0.10.0/24")
+                  terraform import 'module.vpc.aws_subnet.private[0]' $SUBNET_ID 2>&1 || echo "Private subnet 0 import skipped"
+                  ;;
+                "10.0.20.0/24")
+                  terraform import 'module.vpc.aws_subnet.private[1]' $SUBNET_ID 2>&1 || echo "Private subnet 1 import skipped"
+                  ;;
+              esac
             done
             
             # Import Internet Gateway
-            IGW_ID=$(aws ec2 describe-internet-gateways --filters "Name=attachment.vpc-id,Values=$VPC_ID" --region ${{ env.AWS_REGION }} --query 'InternetGateways[0].InternetGatewayId' --output text)
+            IGW_ID=$(aws ec2 describe-internet-gateways --filters "Name=attachment.vpc-id,Values=$VPC_ID" --region ${{ env.AWS_REGION }} --query 'InternetGateways[0].InternetGatewayId' --output text 2>/dev/null)
             if [ "$IGW_ID" != "None" ] && [ -n "$IGW_ID" ]; then
-              terraform import 'module.vpc.aws_internet_gateway.this[0]' $IGW_ID || echo "IGW already in state"
+              terraform import 'module.vpc.aws_internet_gateway.this[0]' $IGW_ID 2>&1 || echo "IGW import skipped"
             fi
             
             # Import NAT Gateway and EIP
-            NAT_INFO=$(aws ec2 describe-nat-gateways --filter "Name=vpc-id,Values=$VPC_ID" --region ${{ env.AWS_REGION }} --query 'NatGateways[0].[NatGatewayId,NatGatewayAddresses[0].AllocationId]' --output text 2>/dev/null || echo "None None")
-            if [ "$NAT_INFO" != "None None" ] && [ -n "$NAT_INFO" ]; then
-              NAT_ID=$(echo $NAT_INFO | cut -f1)
-              EIP_ALLOC=$(echo $NAT_INFO | cut -f2)
-              if [ "$EIP_ALLOC" != "None" ] && [ -n "$EIP_ALLOC" ]; then
-                terraform import 'module.vpc.aws_eip.nat[0]' $EIP_ALLOC || echo "EIP already in state"
+            NAT_GW=$(aws ec2 describe-nat-gateways --filter "Name=vpc-id,Values=$VPC_ID" --region ${{ env.AWS_REGION }} --query 'NatGateways[0]' --output json 2>/dev/null)
+            if [ "$NAT_GW" != "null" ] && [ -n "$NAT_GW" ]; then
+              NAT_ID=$(echo $NAT_GW | jq -r '.NatGatewayId' 2>/dev/null || echo "")
+              EIP_ALLOC=$(echo $NAT_GW | jq -r '.NatGatewayAddresses[0].AllocationId' 2>/dev/null || echo "")
+              if [ -n "$EIP_ALLOC" ] && [ "$EIP_ALLOC" != "null" ]; then
+                terraform import 'module.vpc.aws_eip.nat[0]' $EIP_ALLOC 2>&1 || echo "EIP import skipped"
               fi
-              terraform import 'module.vpc.aws_nat_gateway.this[0]' $NAT_ID || echo "NAT Gateway already in state"
+              if [ -n "$NAT_ID" ] && [ "$NAT_ID" != "null" ]; then
+                terraform import 'module.vpc.aws_nat_gateway.this[0]' $NAT_ID 2>&1 || echo "NAT Gateway import skipped"
+              fi
             fi
+          else
+            echo "Cluster not found or not ACTIVE (status: $CLUSTER_STATUS), skipping cluster and VPC imports"
           fi
           
-          # Refresh state
-          terraform refresh || true
+          echo "Import step completed. Verifying state..."
+          terraform state list | head -20 || echo "State verification completed"
 
-      - name: Check Terraform plan for destructive changes
+      - name: Verify imports and check Terraform plan
         id: terraform-plan
         working-directory: infra/eks
         continue-on-error: true
         run: |
+          echo "Checking Terraform state..."
+          terraform state list | grep -E "(aws_cloudwatch_log_group|aws_iam_role|aws_eks_cluster|module.vpc)" || echo "Some resources may not be in state"
+          
+          echo "Running terraform plan to check for issues..."
           PLAN_OUTPUT=$(terraform plan -no-color 2>&1 || true)
-          echo "$PLAN_OUTPUT" > plan_output.txt
+          echo "$PLAN_OUTPUT"
           
           # Check if plan wants to destroy the cluster
           if echo "$PLAN_OUTPUT" | grep -q "aws_eks_cluster.main.*will be destroyed"; then
             echo "destructive=true" >> $GITHUB_OUTPUT
             echo "⚠️ WARNING: Terraform wants to destroy the cluster!"
-            echo "This usually means VPC resources weren't imported."
+            echo "This usually means VPC resources weren't imported correctly."
             echo "Aborting to prevent cluster destruction."
             exit 1
-          else
-            echo "destructive=false" >> $GITHUB_OUTPUT
-            echo "Plan looks safe, no cluster destruction detected"
           fi
+          
+          # Check if plan wants to create resources that should already exist
+          if echo "$PLAN_OUTPUT" | grep -q "aws_cloudwatch_log_group.cluster.*will be created"; then
+            echo "⚠️ WARNING: Log group not imported, will be created (may fail if exists)"
+          fi
+          if echo "$PLAN_OUTPUT" | grep -q "aws_iam_role.cluster.*will be created"; then
+            echo "⚠️ WARNING: Cluster IAM role not imported, will be created (may fail if exists)"
+          fi
+          if echo "$PLAN_OUTPUT" | grep -q "aws_iam_role.node_group.*will be created"; then
+            echo "⚠️ WARNING: Node group IAM role not imported, will be created (may fail if exists)"
+          fi
+          
+          echo "destructive=false" >> $GITHUB_OUTPUT
+          echo "Plan check completed"
 
       - name: Terraform Apply - EKS
         working-directory: infra/eks
