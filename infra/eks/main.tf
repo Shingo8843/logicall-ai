@@ -113,54 +113,9 @@ resource "aws_iam_role_policy_attachment" "cluster_AmazonEKSClusterPolicy" {
   role       = aws_iam_role.cluster.name
 }
 
-# Fargate Profile for kube-system (CoreDNS)
-resource "aws_eks_fargate_profile" "kube_system" {
-  cluster_name           = aws_eks_cluster.main.name
-  fargate_profile_name   = "kube-system"
-  pod_execution_role_arn = aws_iam_role.fargate_pod_execution.arn
-  subnet_ids             = module.vpc.private_subnets
-
-  selector {
-    namespace = "kube-system"
-    labels = {
-      "k8s-app" = "kube-dns"
-    }
-  }
-
-  tags = var.tags
-}
-
-# Fargate Profile for apps namespace
-resource "aws_eks_fargate_profile" "apps" {
-  cluster_name           = aws_eks_cluster.main.name
-  fargate_profile_name   = "apps"
-  pod_execution_role_arn = aws_iam_role.fargate_pod_execution.arn
-  subnet_ids             = module.vpc.private_subnets
-
-  selector {
-    namespace = "apps"
-  }
-
-  tags = var.tags
-}
-
-# Fargate Profile for argocd namespace
-resource "aws_eks_fargate_profile" "argocd" {
-  cluster_name           = aws_eks_cluster.main.name
-  fargate_profile_name   = "argocd"
-  pod_execution_role_arn = aws_iam_role.fargate_pod_execution.arn
-  subnet_ids             = module.vpc.private_subnets
-
-  selector {
-    namespace = "argocd"
-  }
-
-  tags = var.tags
-}
-
-# Fargate Pod Execution Role
-resource "aws_iam_role" "fargate_pod_execution" {
-  name = "${var.cluster_name}-fargate-pod-execution-role"
+# EKS Node Group IAM Role
+resource "aws_iam_role" "node_group" {
+  name = "${var.cluster_name}-node-group-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -169,7 +124,7 @@ resource "aws_iam_role" "fargate_pod_execution" {
         Action = "sts:AssumeRole"
         Effect = "Allow"
         Principal = {
-          Service = "eks-fargate-pods.amazonaws.com"
+          Service = "ec2.amazonaws.com"
         }
       }
     ]
@@ -178,9 +133,49 @@ resource "aws_iam_role" "fargate_pod_execution" {
   tags = var.tags
 }
 
-resource "aws_iam_role_policy_attachment" "fargate_pod_execution" {
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSFargatePodExecutionRolePolicy"
-  role       = aws_iam_role.fargate_pod_execution.name
+resource "aws_iam_role_policy_attachment" "node_group_AmazonEKSWorkerNodePolicy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
+  role       = aws_iam_role.node_group.name
+}
+
+resource "aws_iam_role_policy_attachment" "node_group_AmazonEKS_CNI_Policy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
+  role       = aws_iam_role.node_group.name
+}
+
+resource "aws_iam_role_policy_attachment" "node_group_AmazonEC2ContainerRegistryReadOnly" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+  role       = aws_iam_role.node_group.name
+}
+
+# EKS Managed Node Group
+resource "aws_eks_node_group" "main" {
+  cluster_name    = aws_eks_cluster.main.name
+  node_group_name = "${var.cluster_name}-node-group"
+  node_role_arn   = aws_iam_role.node_group.arn
+  subnet_ids      = module.vpc.private_subnets
+
+  scaling_config {
+    desired_size = var.node_group_desired_size
+    max_size     = var.node_group_max_size
+    min_size     = var.node_group_min_size
+  }
+
+  instance_types = var.node_instance_types
+
+  update_config {
+    max_unavailable = 1
+  }
+
+  # Ensure that CoreDNS is running before nodes are created
+  depends_on = [
+    aws_iam_role_policy_attachment.node_group_AmazonEKSWorkerNodePolicy,
+    aws_iam_role_policy_attachment.node_group_AmazonEKS_CNI_Policy,
+    aws_iam_role_policy_attachment.node_group_AmazonEC2ContainerRegistryReadOnly,
+    aws_eks_addon.coredns,
+  ]
+
+  tags = var.tags
 }
 
 # EKS Add-ons
@@ -189,14 +184,6 @@ resource "aws_eks_addon" "coredns" {
   addon_name               = "coredns"
   addon_version            = "v1.11.1-eksbuild.4"
   resolve_conflicts_on_update = "OVERWRITE"
-
-  configuration_values = jsonencode({
-    computeType = "fargate"
-  })
-
-  depends_on = [
-    aws_eks_fargate_profile.kube_system,
-  ]
 
   tags = var.tags
 }
@@ -274,7 +261,7 @@ data "kubernetes_config_map_v1" "aws_auth" {
   depends_on = [aws_eks_cluster.main]
 }
 
-# Update aws-auth ConfigMap to include GitHub Actions role
+# Update aws-auth ConfigMap to include node group and GitHub Actions role
 resource "kubernetes_config_map_v1_data" "aws_auth" {
   metadata {
     name      = "aws-auth"
@@ -284,11 +271,18 @@ resource "kubernetes_config_map_v1_data" "aws_auth" {
   data = {
     mapRoles = yamlencode(concat(
       try(yamldecode(data.kubernetes_config_map_v1.aws_auth.data["mapRoles"]), []),
-      [{
-        rolearn  = data.aws_iam_role.github_actions.arn
-        username = "github-actions"
-        groups   = ["system:masters"]
-      }]
+      [
+        {
+          rolearn  = aws_iam_role.node_group.arn
+          username = "system:node:{{EC2PrivateDNSName}}"
+          groups   = ["system:bootstrappers", "system:nodes"]
+        },
+        {
+          rolearn  = data.aws_iam_role.github_actions.arn
+          username = "github-actions"
+          groups   = ["system:masters"]
+        }
+      ]
     ))
   }
 
@@ -296,6 +290,7 @@ resource "kubernetes_config_map_v1_data" "aws_auth" {
 
   depends_on = [
     aws_eks_cluster.main,
+    aws_eks_node_group.main,
     data.kubernetes_config_map_v1.aws_auth,
   ]
 }

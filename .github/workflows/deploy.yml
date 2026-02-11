@@ -11,9 +11,9 @@ permissions:
   contents: read
 
 env:
-  AWS_REGION: ${{ vars.AWS_REGION || 'us-west-2' }}
-  CLUSTER_NAME: ${{ vars.CLUSTER_NAME || 'eks-fargate-only' }}
-  AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  CLUSTER_NAME: ${{ vars.CLUSTER_NAME || 'logicall-ai-cluster' }}
+  AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN  }}
 
 jobs:
   deploy:
@@ -63,11 +63,13 @@ jobs:
 
       - name: Install AWS Load Balancer Controller
         run: |
+          # Note: IAM role for AWS Load Balancer Controller should be created via Terraform
+          # This step installs the controller using Helm
           helm repo add eks https://aws.github.io/eks-charts
           helm repo update
           
-          # We pull the VPC ID dynamically
-          VPC_ID=$(aws eks describe-cluster --name ${{ env.CLUSTER_NAME }} --query "cluster.resourcesVpcConfig.vpcId" --output text)
+          # Create service account (IAM role will be attached via Terraform)
+          kubectl create serviceaccount aws-load-balancer-controller -n kube-system --dry-run=client -o yaml | kubectl apply -f -
           
           helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
             -n kube-system \
@@ -75,7 +77,6 @@ jobs:
             --set serviceAccount.create=false \
             --set serviceAccount.name=aws-load-balancer-controller \
             --set region=${{ env.AWS_REGION }} \
-            --set vpcId=$VPC_ID \
             --wait
 
       - name: Install External Secrets Operator
@@ -91,18 +92,14 @@ jobs:
 
       - name: Install Argo CD
         run: |
-          helm repo add argo https://argoproj.github.io/argo-helm
-          helm repo update
-          helm upgrade --install argocd argo/argo-cd \
-            --namespace argocd \
-            --create-namespace \
-            --set server.service.type=LoadBalancer \
-            --set server.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-type"=external \
-            --set server.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-nlb-target-type"=ip \
-            --set server.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-scheme"=internet-facing \
-            --set configs.params.server.insecure=true \
-            --wait \
-            --timeout 10m
+          kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
+          kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+          
+          echo "Waiting for Argo CD to be ready..."
+          kubectl wait --for=condition=available deployment/argocd-server -n argocd --timeout=300s
+          
+          echo "Exposing Argo CD UI via LoadBalancer..."
+          kubectl patch svc argocd-server -n argocd -p '{"spec": {"type": "LoadBalancer"}}'
 
       - name: Apply Argo CD root application
         run: |

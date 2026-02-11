@@ -1,180 +1,190 @@
-```md
-# EKS Fargate-only GitOps Starter (Terraform + GitHub Actions OIDC + Argo CD + Secrets Manager)
+# Backend-only GitOps on EKS using GitHub Actions, Terraform, and Argo CD (Python)
+https://medium.com/%40neamulkabiremon/build-a-real-world-devops-pipeline-with-github-actions-terraform-eks-and-argo-cd-step-by-step-c568f1efd29e
+https://github.com/neamulkabiremon/ultimate-devops-project-demo
+This repository follows the same architecture and workflow described in the Medium article:
 
-This repo provisions an Amazon EKS cluster that runs workloads on AWS Fargate only, then installs Argo CD and deploys apps via GitOps. It also shows how to use AWS Secrets Manager through External Secrets Operator (ESO).
+> *Build a real-world DevOps pipeline with GitHub Actions, Terraform, EKS, and Argo CD*
 
-Goals:
-- Everything in Git
-- No long-lived AWS keys, no IAM users for kubectl
-- Rebuild quickly by re-applying Terraform and letting Argo CD reconcile apps
+The only differences are:
 
-## What you will deploy
+* Python backend instead of Node.js
+* Backend-only service (no frontend)
+* Same CI-driven GitOps pattern where **CI updates manifests and Argo CD syncs**
 
-AWS:
-- S3 bucket for Terraform state
-- DynamoDB table for Terraform state locking
-- IAM OIDC provider for GitHub Actions
-- IAM role assumed by GitHub Actions (OIDC)
-- VPC (public + private subnets, NAT)
-- EKS control plane
-- EKS Fargate profiles:
-  - CoreDNS only in kube-system
-  - apps namespace
-- CoreDNS configured to run on Fargate
-- (Optional) AWS Secrets Manager secret(s)
+---
 
-Kubernetes:
-- Argo CD (installed by CI)
-- Root Argo CD Application (points at `gitops/`)
-- NGINX “hello world” app in `apps` namespace, exposed via Service type LoadBalancer
-- External Secrets Operator and example ExternalSecret (optional)
+## Architecture (same as the Medium article)
 
-## Repo layout
+1. **Terraform** provisions the EKS cluster
+2. **GitHub Actions (CI)**:
+
+   * builds a Docker image
+   * pushes it to Amazon ECR
+   * updates the Kubernetes manifest with the new image tag
+3. **Argo CD**:
+
+   * watches the Git repository
+   * syncs Kubernetes manifests to the cluster automatically
+
+Git is the single source of truth.
+
+---
+
+## Repository structure
 
 ```
-
 .
-├── infra
-│   ├── bootstrap
-│   │   ├── main.tf
-│   │   ├── variables.tf
-│   │   └── outputs.tf
-│   └── eks
-│       ├── main.tf
-│       ├── variables.tf
-│       └── outputs.tf
-├── gitops
-│   ├── argocd
-│   │   └── root-app.yaml
-│   └── apps
-│       ├── nginx-hello
-│       │   ├── namespace.yaml
-│       │   ├── deployment.yaml
-│       │   └── service.yaml
-│       └── external-secrets
-│           ├── install.yaml (or helm values if you prefer Helm)
-│           ├── secretstore.yaml
-│           └── externalsecret.yaml
-└── .github
-└── workflows
-└── deploy.yml
+├── app/                         # Python backend source
+│   └── main.py
+├── Dockerfile
+├── requirements.txt
+│
+├── infra/
+│   └── eks/                     # Terraform (same role as Medium article)
+│
+├── gitops/
+│   ├── argocd/
+│   │   └── root-app.yaml        # Argo CD Application
+│   └── apps/
+│       └── backend/
+│           ├── namespace.yaml
+│           ├── deployment.yaml
+│           └── service.yaml
+│
+└── .github/
+    └── workflows/
+        ├── deploy-eks.yaml      # EKS + Argo CD bootstrap (your existing one)
+        └── ci-backend.yaml      # Build, push, update manifest
+```
 
-````
+This mirrors the Medium article’s “infra + app + gitops” separation.
+
+---
 
 ## Prerequisites
 
-Accounts and tools:
-- AWS account with permissions to create IAM, VPC, EKS, S3, DynamoDB
-- GitHub repo for this project
+Before starting, make sure you have:
 
-One-time local or CloudShell tools (only needed for `infra/bootstrap`):
-- Terraform
-- AWS CLI
+* AWS account
+* IAM role for GitHub OIDC (same as Medium article)
+* GitHub repository (public or private)
+* Terraform >= 1.6
+* AWS CLI configured locally (for first run only)
 
-After bootstrap, GitHub Actions runs Terraform and kubectl/helm in a short-lived runner.
+---
 
-## Step 1: Configure your project variables
+## Step 1: Provision EKS (same as Medium article)
 
-Decide:
-- AWS region (example: `us-west-2`)
-- Cluster name (example: `eks-fargate-only`)
-- GitHub org and repo name (example: `my-org/my-repo`)
-- Branch to allow in OIDC trust (example: `main`)
+Terraform lives in:
 
-You will set these in:
-- `infra/bootstrap/variables.tf` or `terraform.tfvars`
-- `infra/eks/variables.tf` or `terraform.tfvars`
-
-## Step 2: Run bootstrap (one time)
-
-Bootstrap creates:
-- Terraform state bucket and lock table
-- GitHub Actions OIDC provider
-- IAM role for GitHub Actions
-
-From `infra/bootstrap`:
-
-```bash
-terraform init
-terraform apply
-````
-
-Take note of outputs:
-
-* state bucket name
-* lock table name
-* GitHub Actions role ARN
-
-## Step 3: Configure Terraform backend for the EKS stack
-
-In `infra/eks`, configure remote backend to use the S3 bucket and DynamoDB table created by bootstrap.
-
-Example `backend.tf` (create this file in `infra/eks`):
-
-```hcl
-terraform {
-  backend "s3" {
-    bucket         = "REPLACE_WITH_STATE_BUCKET"
-    key            = "eks/terraform.tfstate"
-    region         = "REPLACE_WITH_REGION"
-    dynamodb_table = "REPLACE_WITH_LOCK_TABLE"
-    encrypt        = true
-  }
-}
+```
+infra/eks
 ```
 
-Then:
+Run locally once if desired:
 
 ```bash
 cd infra/eks
 terraform init
+terraform apply
 ```
 
-Commit `backend.tf` after you fill it in.
+Or let GitHub Actions run the **deploy-eks.yaml** workflow.
 
-## Step 4: Add GitHub Actions workflow
+This workflow:
 
-Create `.github/workflows/deploy.yml` that does:
+* creates the EKS cluster
+* installs Argo CD
+* applies `gitops/argocd/root-app.yaml`
 
-* Assume AWS role via OIDC
-* Terraform apply for `infra/eks`
-* Install Argo CD
-* Apply Argo root app
+No application code is deployed yet.
 
-Important GitHub Actions permissions:
+---
 
-* `id-token: write`
-* `contents: read`
+## Step 2: Python backend (minimal)
 
-You will need these secrets or variables in GitHub:
+`app/main.py`
 
-* No AWS keys needed
-* Provide:
+```python
+from fastapi import FastAPI
 
-  * `AWS_REGION`
-  * `AWS_ROLE_ARN` (from bootstrap output)
-  * `CLUSTER_NAME` (same as Terraform)
+app = FastAPI()
 
-## Step 5: Push to GitHub and run the workflow
+@app.get("/health")
+def health():
+    return {"ok": True}
+```
 
-Push your repo to GitHub.
-Run the workflow (or merge to main if your workflow triggers on push).
+`requirements.txt`
 
-Expected outcome:
+```txt
+fastapi
+uvicorn[standard]
+```
 
-* EKS cluster exists
-* Fargate profiles exist
-* CoreDNS is on Fargate
-* Argo CD is installed
-* Root app is applied, Argo starts reconciling `gitops/`
+`Dockerfile`
 
-## Step 6: Deploy NGINX “hello world”
+```dockerfile
+FROM python:3.12-slim
 
-Argo will apply the manifests in `gitops/apps/nginx-hello`.
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-The minimum files:
+COPY app ./app
+EXPOSE 8000
+CMD ["uvicorn", "app.main:app", "--host=0.0.0.0", "--port=8000"]
+```
 
-`gitops/apps/nginx-hello/namespace.yaml`
+This directly replaces the Node app in the Medium tutorial.
+
+---
+
+## Step 3: Kubernetes manifests (GitOps source of truth)
+
+`gitops/apps/backend/deployment.yaml`
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: apps
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      containers:
+        - name: backend
+          image: YOUR_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/backend:REPLACE_ME
+          ports:
+            - containerPort: 8000
+```
+
+`gitops/apps/backend/service.yaml`
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: apps
+spec:
+  selector:
+    app: backend
+  ports:
+    - port: 80
+      targetPort: 8000
+  type: ClusterIP
+```
+
+`gitops/apps/backend/namespace.yaml`
 
 ```yaml
 apiVersion: v1
@@ -183,140 +193,104 @@ metadata:
   name: apps
 ```
 
-`gitops/apps/nginx-hello/deployment.yaml`
+This is identical in spirit to the Medium article’s manifests.
+
+---
+
+## Step 4: Argo CD Application (same model as Medium)
+
+`gitops/argocd/root-app.yaml`
 
 ```yaml
-apiVersion: apps/v1
-kind: Deployment
+apiVersion: argoproj.io/v1alpha1
+kind: Application
 metadata:
-  name: nginx-hello
-  namespace: apps
+  name: backend
+  namespace: argocd
 spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: nginx-hello
-  template:
-    metadata:
-      labels:
-        app: nginx-hello
-    spec:
-      containers:
-        - name: nginx
-          image: nginx:stable
-          ports:
-            - containerPort: 80
-          command: ["/bin/sh", "-c"]
-          args:
-            - |
-              echo 'hello world' > /usr/share/nginx/html/index.html &&
-              nginx -g 'daemon off;'
+  project: default
+  source:
+    repoURL: https://github.com/YOUR_ORG/YOUR_REPO.git
+    targetRevision: main
+    path: gitops/apps/backend
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: apps
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
 ```
 
-`gitops/apps/nginx-hello/service.yaml`
+This is the same “CI commits → Argo CD syncs” pattern used in the Medium article.
 
-```yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: nginx-hello
-  namespace: apps
-spec:
-  type: LoadBalancer
-  selector:
-    app: nginx-hello
-  ports:
-    - port: 80
-      targetPort: 80
+---
+
+## Step 5: CI pipeline (standard GitOps)
+
+`.github/workflows/ci-backend.yaml`
+
+What it does:
+
+1. Build Python image
+2. Push to Amazon ECR
+3. Update `deployment.yaml` image tag
+4. Commit the change back to Git
+
+This is the **standard CI-driven GitOps pattern** and matches the article’s intent exactly.
+
+Once this runs:
+
+* Git changes
+* Argo CD detects the change
+* Backend is deployed
+
+---
+
+## How deployments work (important)
+
+* **Do not kubectl apply app manifests manually**
+* **Do not change image tags by hand**
+
+Deployment flow:
+
+```
+git push → GitHub Actions → Git commit → Argo CD sync
 ```
 
-When Argo syncs, an external endpoint will appear. You can see it in AWS console or by running:
+Rollback:
 
 ```bash
-kubectl get svc -n apps
+git revert <commit>
 ```
 
-If you do not want to run kubectl locally, view it via AWS console:
+---
 
-* EKS cluster -> Resources -> Services and ingress
-* Or the EC2 Load Balancers page for the created load balancer
+## Common first-run checklist
 
-## Step 7: Use AWS Secrets Manager with External Secrets Operator (optional)
+Before triggering CI:
 
-You can manage the AWS secret in Terraform:
+* ECR repository `backend` exists
+* Argo CD can access the Git repository
+* `repoURL` in `root-app.yaml` is correct
+* AWS_REGION matches ECR and EKS
 
-* `aws_secretsmanager_secret`
-* `aws_secretsmanager_secret_version`
+---
 
-Then install ESO via GitOps and configure:
+## Why this matches the Medium article closely
 
-* `SecretStore` that authenticates using IRSA
-* `ExternalSecret` that reads a secret from Secrets Manager and writes a Kubernetes Secret
+* Terraform still owns EKS
+* GitHub Actions still does build + deploy
+* Argo CD still reconciles Git state
+* No extra controllers or patterns added
+* Only language changed (Node → Python)
 
-High level pieces you need:
+---
 
-1. Terraform creates:
+If you want, next I can:
 
-   * Secrets Manager secret
-   * IAM policy for reading that secret ARN
-   * IAM role for ESO service account (IRSA)
-2. GitOps applies:
-
-   * ESO installation
-   * ServiceAccount annotated to use the IRSA role
-   * SecretStore and ExternalSecret resources
-
-After ESO syncs, your app can use the Kubernetes Secret as env vars or mounted volume.
-
-## How to rebuild quickly
-
-To recreate the cluster:
-
-* Terraform apply from CI creates or updates AWS infra
-* Argo CD reconciles Kubernetes resources from Git
-
-If you destroy and recreate:
-
-* `terraform destroy` for `infra/eks`
-* then `terraform apply` again
-* Argo CD will be reinstalled by CI, then it will resync apps
-
-Do not destroy `infra/bootstrap` unless you want to rebuild the CI trust and Terraform state.
-
-## Cursor tips to work efficiently
-
-Suggested prompts to Cursor:
-
-* “Create Terraform bootstrap stack for S3 backend, DynamoDB lock, GitHub OIDC provider, and an IAM role restricted to this repo and branch.”
-* “Create EKS Fargate-only Terraform stack with CoreDNS on Fargate and an apps namespace Fargate profile.”
-* “Generate GitHub Actions workflow using aws-actions/configure-aws-credentials with OIDC and then run terraform apply and install Argo CD with Helm.”
-* “Create Argo CD root application that points to gitops/ and enables auto-sync.”
-
-Suggested workflow:
-
-1. Use Cursor to generate `infra/bootstrap`
-2. Apply bootstrap once
-3. Use Cursor to generate `infra/eks`
-4. Add workflow and GitOps manifests
-5. Push and let CI do the rest
-
-## Troubleshooting
-
-CoreDNS pending:
-
-* Ensure your Fargate profile selector matches CoreDNS labels in kube-system.
-* Ensure CoreDNS add-on is configured to run on Fargate.
-
-Pods not scheduled:
-
-* Ensure the namespace matches the Fargate profile selector, for example `apps`.
-
-No external endpoint:
-
-* Service type must be `LoadBalancer`
-* It can take a few minutes to provision
-* Check AWS Load Balancers console
-
-Argo CD cannot pull repo:
-
-* If repo is private, you must configure Argo repo credentials or use GitHub App/token method.
+* diff this against the Medium repo line-by-line
+* tighten it further to avoid any Argo CD edge cases
+* add an optional Ingress later without changing the core flow

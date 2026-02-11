@@ -1,0 +1,99 @@
+name: CI - Build and Deploy Backend
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'app/**'
+      - 'Dockerfile'
+      - 'requirements.txt'
+      - '.github/workflows/ci-backend.yaml'
+  workflow_dispatch:
+
+permissions:
+  id-token: write # Required for OIDC
+  contents: write # Required to commit manifest updates
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  ECR_REPOSITORY: backend
+  AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN || 'arn:aws:iam::494777943750:role/GitHubActionsRole' }}
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment: AWS
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          role-session-name: GitHubActions-CI
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Get AWS Account ID
+        id: get-account-id
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          echo "account_id=$ACCOUNT_ID" >> $GITHUB_OUTPUT
+
+      - name: Create ECR repository if it doesn't exist
+        run: |
+          aws ecr describe-repositories --repository-names ${{ env.ECR_REPOSITORY }} --region ${{ env.AWS_REGION }} || \
+          aws ecr create-repository --repository-name ${{ env.ECR_REPOSITORY }} --region ${{ env.AWS_REGION }}
+
+      - name: Build, tag, and push image to Amazon ECR
+        id: build-image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          # Build Docker image
+          docker build -t $ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG .
+          docker tag $ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG $ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:latest
+          
+          # Push both tags
+          docker push $ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG
+          docker push $ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:latest
+          
+          # Output image URI for manifest update
+          echo "image_uri=$ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+      - name: Update Kubernetes manifest with new image tag
+        env:
+          IMAGE_URI: ${{ steps.build-image.outputs.image_uri }}
+          ACCOUNT_ID: ${{ steps.get-account-id.outputs.account_id }}
+        run: |
+          # Replace the image in deployment.yaml
+          sed -i "s|YOUR_ACCOUNT_ID.dkr.ecr.us-west-2.amazonaws.com/backend:REPLACE_ME|$IMAGE_URI|g" gitops/apps/backend/deployment.yaml
+          
+          # Verify the change
+          echo "Updated deployment.yaml:"
+          grep "image:" gitops/apps/backend/deployment.yaml
+
+      - name: Commit and push manifest changes
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add gitops/apps/backend/deployment.yaml
+          
+          # Only commit if there are changes
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "chore: update backend image to ${{ github.sha }}"
+            git push
+          fi
+

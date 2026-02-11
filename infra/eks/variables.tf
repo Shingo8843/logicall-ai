@@ -1,13 +1,13 @@
 variable "aws_region" {
   description = "AWS region for resources"
   type        = string
-  default     = "us-west-2"
+  default     = "us-east-1"
 }
 
 variable "cluster_name" {
   description = "Name of the EKS cluster"
   type        = string
-  default     = "eks-fargate-only"
+  default     = "logicall-ai-cluster"
 }
 
 variable "kubernetes_version" {
@@ -25,7 +25,7 @@ variable "vpc_cidr" {
 variable "availability_zones" {
   description = "Availability zones"
   type        = list(string)
-  default     = ["us-west-2a", "us-west-2b"]
+  default     = ["us-east-1a", "us-east-1b"]
 }
 
 variable "public_subnet_cidrs" {
@@ -52,11 +52,35 @@ variable "cluster_endpoint_public_access_cidrs" {
   default     = ["0.0.0.0/0"] # Restrict this in production
 }
 
+variable "node_group_desired_size" {
+  description = "Desired number of nodes in the node group"
+  type        = number
+  default     = 2
+}
+
+variable "node_group_min_size" {
+  description = "Minimum number of nodes in the node group"
+  type        = number
+  default     = 1
+}
+
+variable "node_group_max_size" {
+  description = "Maximum number of nodes in the node group"
+  type        = number
+  default     = 3
+}
+
+variable "node_instance_types" {
+  description = "Instance types for the node group"
+  type        = list(string)
+  default     = ["t3.medium"]
+}
+
 variable "tags" {
   description = "Tags to apply to resources"
   type        = map(string)
   default = {
-    Project     = "eks-fargate-gitops"
+    Project     = "eks-gitops"
     ManagedBy   = "terraform"
     Environment = "dev"
   }
