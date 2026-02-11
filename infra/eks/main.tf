@@ -314,6 +314,23 @@ resource "kubernetes_config_map_v1_data" "aws_auth" {
         }
       ]
     ))
+
+    # Grant direct cluster-admin access to IAM user Shingo
+    mapUsers = yamlencode(concat(
+      try(
+        yamldecode(
+          lookup(data.kubernetes_config_map_v1.aws_auth.data, "mapUsers", "[]")
+        ),
+        []
+      ),
+      [
+        {
+          userarn  = "arn:aws:iam::494777943750:user/Shingo"
+          username = "shingo"
+          groups   = ["system:masters"]
+        }
+      ]
+    ))
   }
 
   force = true
