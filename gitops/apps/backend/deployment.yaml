@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: backend
-          image: YOUR_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/backend:REPLACE_ME
+          image: 494777943750.dkr.ecr.us-east-1.amazonaws.com/backend:a36cd5bfdb2ea72aefa044bb52bbc85601a81881
           ports:
             - containerPort: 8000
           livenessProbe:
