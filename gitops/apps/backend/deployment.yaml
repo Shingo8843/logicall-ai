@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: agent
-          image: YOUR_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/backend:REPLACE_ME
+          image: 494777943750.dkr.ecr.us-east-1.amazonaws.com/backend:f89999a81e917ab58b0015e607d44b3b299ddf10
           env:
             - name: LIVEKIT_URL
               valueFrom:
