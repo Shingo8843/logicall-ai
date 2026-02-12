@@ -33,37 +33,37 @@ A complete DevOps pipeline for deploying a LiveKit voice AI agent to Amazon EKS 
 ┌──────────┐  ┌──────────────────┐
 │ Argo CD  │  │ AWS Secrets      │
 │ (GitOps) │  │ Manager          │
-└────┬─────┘  └────────┬──────────┘
+└────┬─────┘  └────────┬─────────┘
      │                 │
      │                 │
      ▼                 ▼
 ┌─────────────────────────────┐
-│ External Secrets Operator    │
-│ (Syncs secrets to K8s)       │
+│ External Secrets Operator   │
+│ (Syncs secrets to K8s)      │
 └──────────────┬──────────────┘
                │
                ▼
       ┌─────────────────┐
       │ LiveKit Agent   │
       │ Pods            │
-      │ (Auto-scaled)    │
+      │ (Auto-scaled)   │
       └────────┬────────┘
                │
                │
       ┌────────┴────────┐
-      │                │
-      ▼                ▼
-┌──────────┐    ┌──────────────┐
-│   HPA    │◄───│   Metrics    │
-│(Autoscaler)│    │   Server    │
-└──────────┘    └──────────────┘
+      │                 │
+      ▼                 ▼
+┌────────────┐    ┌──────────────┐
+│   HPA      │◄───│   Metrics    │
+│(Autoscaler)│    │   Server     │
+└────────────┘    └──────────────┘
       │
       │
       ▼
-┌─────────────────┐
-│ LiveKit Cloud   │
-│ (Voice AI)       │
-└─────────────────┘
+┌────────────────┐
+│ LiveKit Cloud  │
+│ (Voice AI)     │
+└────────────────┘
 ```
 
 ### Components
@@ -80,7 +80,6 @@ A complete DevOps pipeline for deploying a LiveKit voice AI agent to Amazon EKS 
 10. **LiveKit Cloud** - Voice AI infrastructure
 
 ## 📋 Prerequisites
-
 - AWS Account with appropriate permissions
 - GitHub repository (public or private)
 - GitHub repository variables configured:
@@ -596,7 +595,7 @@ For detailed documentation, see [SECRET_MANAGEMENT.md](SECRET_MANAGEMENT.md).
 
 ## 📄 License
 
-[Add your license here]
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ---
 
