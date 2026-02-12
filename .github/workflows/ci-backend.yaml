@@ -5,9 +5,9 @@ on:
     branches:
       - main
     paths:
-      - 'app/**'
+      - 'src/**'
       - 'Dockerfile'
-      - 'requirements.txt'
+      - 'pyproject.toml'
       - '.github/workflows/ci-backend.yaml'
   workflow_dispatch:
 

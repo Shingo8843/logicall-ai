@@ -1,41 +1,60 @@
-# Git
-.git
-.gitignore
-
-# Documentation
-*.md
-DOCKER_SETUP.md
-
-# Python
-__pycache__
-*.pyc
+# Python bytecode and artifacts
+__pycache__/
+*.py[cod]
 *.pyo
 *.pyd
-.Python
-*.so
-*.egg
-*.egg-info
-dist
-build
+*.egg-info/
+dist/
+build/
 
 # Virtual environments
+.venv/
 venv/
 env/
 ENV/
 
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
+# Caches and test output
+.cache/
+.pytest_cache/
+.ruff_cache/
+coverage/
 
-# Testing
-test-docker.ps1
+# Logs and temp files
+*.log
+*.gz
+*.tgz
+.tmp
+.cache
+
+# Environment variables (we'll mount .env.local via docker-compose)
+.env
+.env.*
+!.env.local
+
+# VCS, editor, OS
+.git
+.gitignore
+.gitattributes
 .github/
+.idea/
+.vscode/
+.DS_Store
 
-# Infrastructure
+# Project docs and misc (keep README for reference)
+*.md
+!README.md
+LICENSE
+
+# Project tests
+test/
+tests/
+eval/
+evals/
+
+# Infrastructure (keep for reference but don't copy to image)
 infra/
-
-# GitOps 
 gitops/
+
+# PowerShell scripts
+*.ps1
 

@@ -1,0 +1,18 @@
+services:
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: livekit-agent
+    env_file:
+      - .env.local
+    volumes:
+      # Mount .env.local so the agent can read it (load_dotenv expects the file)
+      - ./.env.local:/app/.env.local:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+    # For local testing with Agents Playground, the agent runs in dev mode
+    # and connects to LiveKit Cloud
+    restart: unless-stopped
+    # No ports needed - agent connects to LiveKit Cloud via WebSocket
+

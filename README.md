@@ -1,6 +1,6 @@
-# Logicall AI - EKS GitOps Pipeline
+# Logicall AI - LiveKit Voice Agent on AWS EKS
 
-A complete DevOps pipeline for deploying a Python FastAPI backend to Amazon EKS using Terraform, GitHub Actions, and Argo CD.
+A complete DevOps pipeline for deploying a LiveKit voice AI agent to Amazon EKS using Terraform, GitHub Actions, Argo CD, and External Secrets Operator.
 
 ## 🏗️ Architecture
 
@@ -26,17 +26,33 @@ A complete DevOps pipeline for deploying a Python FastAPI backend to Amazon EKS 
 └────┬─────┘  └────┬─────┘
      │             │
      └──────┬──────┘
-            ▼
-      ┌──────────┐
-      │ Argo CD  │
-      │ (GitOps) │
-      └────┬─────┘
-           │
-           ▼
-      ┌──────────┐
-      │ Backend  │
-      │  Pods    │
-      └──────────┘
+            │
+    ┌───────┴───────┐
+    │               │
+    ▼               ▼
+┌──────────┐  ┌──────────────────┐
+│ Argo CD  │  │ AWS Secrets      │
+│ (GitOps) │  │ Manager          │
+└────┬─────┘  └────────┬──────────┘
+     │                 │
+     │                 │
+     ▼                 ▼
+┌─────────────────────────────┐
+│ External Secrets Operator    │
+│ (Syncs secrets to K8s)       │
+└──────────────┬──────────────┘
+               │
+               ▼
+      ┌─────────────────┐
+      │ LiveKit Agent   │
+      │ Pods            │
+      └────────┬────────┘
+               │
+               ▼
+      ┌─────────────────┐
+      │ LiveKit Cloud   │
+      │ (Voice AI)       │
+      └─────────────────┘
 ```
 
 ### Components
@@ -44,8 +60,11 @@ A complete DevOps pipeline for deploying a Python FastAPI backend to Amazon EKS 
 1. **Terraform** - Provisions EKS cluster, VPC, IAM roles, and networking
 2. **GitHub Actions CI** - Builds Docker images, pushes to ECR, updates manifests
 3. **Argo CD** - GitOps controller that syncs Kubernetes manifests from Git
-4. **AWS EKS** - Managed Kubernetes cluster
-5. **AWS ECR** - Container registry for Docker images
+4. **External Secrets Operator** - Syncs secrets from AWS Secrets Manager to Kubernetes
+5. **AWS EKS** - Managed Kubernetes cluster
+6. **AWS ECR** - Container registry for Docker images
+7. **AWS Secrets Manager** - Secure secret storage
+8. **LiveKit Cloud** - Voice AI infrastructure
 
 ## 📋 Prerequisites
 
@@ -103,11 +122,63 @@ kubectl get svc backend -n apps -o jsonpath='{.status.loadBalancer.ingress[0].ho
 powershell -ExecutionPolicy Bypass -File get-urls.ps1
 ```
 
-### 4. Deploy Backend Application
+### 4. Set Up Secret Management (First Time Only)
+
+This project uses **External Secrets Operator** to automatically sync secrets from **AWS Secrets Manager** to Kubernetes.
+
+**Option A: Using the setup script (Recommended)**
+
+```powershell
+powershell -ExecutionPolicy Bypass -File setup-external-secrets.ps1
+```
+
+This script will:
+1. Create/update the secret in AWS Secrets Manager from your `.env.local` file
+2. Install External Secrets Operator (if not already installed)
+3. Configure IAM role annotations
+
+**Option B: Manual setup**
+
+1. **Create secret in AWS Secrets Manager:**
+   ```bash
+   aws secretsmanager create-secret \
+     --name livekit-agent-secrets \
+     --secret-string '{"LIVEKIT_URL":"your-url","LIVEKIT_API_KEY":"your-key","LIVEKIT_API_SECRET":"your-secret"}' \
+     --region us-east-1
+   ```
+
+2. **Get IAM role ARN from Terraform:**
+   ```bash
+   cd infra/eks
+   terraform output external_secrets_iam_role_arn
+   ```
+
+3. **Update ServiceAccount with IAM role:**
+   ```bash
+   kubectl annotate serviceaccount external-secrets-sa \
+     -n apps \
+     eks.amazonaws.com/role-arn=arn:aws:iam::ACCOUNT_ID:role/CLUSTER_NAME-external-secrets-role \
+     --overwrite
+   ```
+
+4. **Deploy ExternalSecret resource:**
+   ```bash
+   kubectl apply -f gitops/apps/backend/externalsecret.yaml
+   ```
+
+**Verify secret sync:**
+```bash
+kubectl get externalsecret livekit-credentials -n apps
+kubectl get secret livekit-credentials -n apps
+```
+
+See [SECRET_MANAGEMENT.md](SECRET_MANAGEMENT.md) for detailed documentation.
+
+### 5. Deploy Backend Application
 
 The backend is automatically deployed when you:
 
-1. Push changes to `app/`, `Dockerfile`, or `requirements.txt`
+1. Push changes to `src/`, `Dockerfile`, or `pyproject.toml`
 2. Or manually trigger **Actions → CI - Build and Deploy Backend**
 
 The CI pipeline will:
@@ -138,13 +209,21 @@ The CI pipeline will:
 │   └── apps/
 │       └── backend/
 │           ├── deployment.yaml  # Kubernetes Deployment
-│           ├── service.yaml      # Kubernetes Service
+│           ├── externalsecret.yaml # External Secrets Operator config
+│           ├── external-secrets-sa.yaml # ServiceAccount for ESO
+│           ├── service.yaml      # Kubernetes Service (commented out)
 │           └── namespace.yaml   # Namespace definition
 │
 ├── .github/
 │   └── workflows/
 │       ├── deploy.yml           # EKS + Argo CD deployment
 │       └── ci-backend.yaml     # CI pipeline (build & deploy)
+│
+├── infra/eks/
+│   ├── main.tf                  # EKS cluster, VPC, IAM
+│   ├── external-secrets.tf      # External Secrets IAM role
+│   ├── variables.tf             # Terraform variables
+│   └── terraform.tfvars         # Variable values
 │
 └── *.ps1                         # Helper scripts (Windows)
 ```
@@ -254,14 +333,16 @@ Edit `infra/eks/terraform.tfvars` to customize:
 - Instance types
 - VPC CIDR blocks
 
-### Backend Service
+### LiveKit Agent Configuration
 
-The backend service is configured in `gitops/apps/backend/service.yaml`:
+The LiveKit agent is configured in `gitops/apps/backend/deployment.yaml`:
 
-- **Type**: `LoadBalancer` (exposes publicly)
-- **Port**: `80` → `8000` (container port)
+- **Replicas**: 1 (adjust as needed)
+- **Resources**: 512Mi-1Gi memory, 250m-1000m CPU
+- **Secrets**: Automatically injected from AWS Secrets Manager via External Secrets Operator
+- **Mode**: Production (`start` command) - connects to LiveKit Cloud
 
-To change to `ClusterIP` (internal only), edit the service and commit.
+**Note**: The agent connects outbound to LiveKit Cloud via WebSocket, so no Kubernetes Service/LoadBalancer is needed.
 
 ## 🐛 Troubleshooting
 
@@ -346,14 +427,66 @@ If Terraform destroy fails:
 - ✅ Uses GitHub OIDC for AWS authentication
 - ✅ Terraform state encrypted in S3
 - ✅ IAM roles follow least privilege
+- ✅ Secrets managed in AWS Secrets Manager (encrypted at rest)
+- ✅ External Secrets Operator uses IRSA (no long-lived credentials)
+- ✅ All secret access logged in CloudTrail
 - ⚠️ AWS Account ID visible in some files (acceptable for public repos)
 - ⚠️ IAM user names visible in Terraform config (low risk)
+
+## 🔐 Secret Management
+
+This project uses **External Secrets Operator** to automatically sync secrets from **AWS Secrets Manager** to Kubernetes.
+
+### Benefits
+
+- **No manual kubectl commands** - Secrets are managed in AWS
+- **GitOps-friendly** - Secret definitions in Git, values in AWS
+- **Automatic sync** - Secrets update automatically when changed in AWS
+- **Secure** - Uses IAM Roles for Service Accounts (IRSA) for authentication
+- **Audit trail** - All secret access is logged in CloudTrail
+
+### Quick Setup
+
+```powershell
+# Run the setup script (reads from .env.local)
+powershell -ExecutionPolicy Bypass -File setup-external-secrets.ps1
+```
+
+### Updating Secrets
+
+```bash
+# Update secret in AWS Secrets Manager
+aws secretsmanager update-secret \
+  --secret-id livekit-agent-secrets \
+  --secret-string '{"LIVEKIT_URL":"...","LIVEKIT_API_KEY":"...","LIVEKIT_API_SECRET":"..."}' \
+  --region us-east-1
+
+# External Secrets will automatically sync within 1 hour
+# Or force immediate sync by deleting/recreating the ExternalSecret
+```
+
+### Verifying Secrets
+
+```bash
+# Check ExternalSecret status
+kubectl get externalsecret livekit-credentials -n apps
+
+# Check Kubernetes secret
+kubectl get secret livekit-credentials -n apps
+
+# View secret details
+kubectl describe externalsecret livekit-credentials -n apps
+```
+
+For detailed documentation, see [SECRET_MANAGEMENT.md](SECRET_MANAGEMENT.md).
 
 ## 📚 Additional Resources
 
 - [Terraform AWS EKS Module](https://registry.terraform.io/modules/terraform-aws-modules/eks/aws/)
 - [Argo CD Documentation](https://argo-cd.readthedocs.io/)
-- [FastAPI Documentation](https://fastapi.tiangolo.com/)
+- [LiveKit Agents Documentation](https://docs.livekit.io/agents/)
+- [External Secrets Operator](https://external-secrets.io/)
+- [AWS Secrets Manager](https://docs.aws.amazon.com/secretsmanager/)
 - [AWS EKS Best Practices](https://aws.github.io/aws-eks-best-practices/)
 
 ## 📄 License

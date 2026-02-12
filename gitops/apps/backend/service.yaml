@@ -1,13 +1,18 @@
-apiVersion: v1
-kind: Service
-metadata:
-  name: backend
-  namespace: apps
-spec:
-  selector:
-    app: backend
-  ports:
-    - port: 80
-      targetPort: 8000
-  type: LoadBalancer
+# LiveKit agents connect outbound to LiveKit Cloud via WebSocket
+# They don't need a Kubernetes Service or LoadBalancer
+# This service is kept for reference but not used
+# If you need to expose metrics or health endpoints in the future, uncomment and configure
+---
+# apiVersion: v1
+# kind: Service
+# metadata:
+#   name: livekit-agent
+#   namespace: apps
+# spec:
+#   selector:
+#     app: livekit-agent
+#   ports:
+#     - port: 8080
+#       targetPort: 8080
+#   type: ClusterIP
 
