@@ -11,6 +11,7 @@ services:
       - ./.env.local:/app/.env.local:ro
     environment:
       - PYTHONUNBUFFERED=1
+    command: ["uv", "run", "-m", "src.agent", "dev"]
     # For local testing with Agents Playground, the agent runs in dev mode
     # and connects to LiveKit Cloud
     restart: unless-stopped

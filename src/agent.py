@@ -1,56 +1,48 @@
+"""
+Full configuration agent with database-driven profile system.
+
+This agent supports all LiveKit configuration options surfaced via
+DynamoDB profiles with sensible defaults for everything.
+"""
+
 import logging
 
 from dotenv import load_dotenv
-from livekit import rtc
 from livekit.agents import (
     Agent,
     AgentServer,
-    AgentSession,
     JobContext,
     JobProcess,
     cli,
-    inference,
-    room_io,
 )
-from livekit.plugins import noise_cancellation, silero
-from livekit.plugins.turn_detector.multilingual import MultilingualModel
+from livekit.plugins import silero
+from .profile_resolver import resolve_profile
+from .session_builder import build_session
 
 logger = logging.getLogger("agent")
 
 load_dotenv(".env.local")
 
 
-class Assistant(Agent):
-    def __init__(self) -> None:
+class ConfigurableAgent(Agent):
+    """
+    Agent that uses configuration from profile.
+    
+    Instructions and tools are set from the profile configuration.
+    """
+    
+    def __init__(self, system_prompt: str, tools: list = None) -> None:
         super().__init__(
-            instructions="""You are a helpful voice AI assistant. The user is interacting with you via voice, even if you perceive the conversation as text.
-            You eagerly assist users with their questions by providing information from your extensive knowledge.
-            Your responses are concise, to the point, and without any complex formatting or punctuation including emojis, asterisks, or other symbols.
-            You are curious, friendly, and have a sense of humor.""",
+            instructions=system_prompt,
+            tools=tools or [],
         )
-
-    # To add tools, use the @function_tool decorator.
-    # Here's an example that adds a simple weather tool.
-    # You also have to add `from livekit.agents import function_tool, RunContext` to the top of this file
-    # @function_tool
-    # async def lookup_weather(self, context: RunContext, location: str):
-    #     """Use this tool to look up current weather information in the given location.
-    #
-    #     If the location is not supported by the weather service, the tool will indicate this. You must tell the user the location's weather is unavailable.
-    #
-    #     Args:
-    #         location: The location to look up weather information for (e.g. city name)
-    #     """
-    #
-    #     logger.info(f"Looking up weather for {location}")
-    #
-    #     return "sunny with a temperature of 70 degrees."
 
 
 server = AgentServer()
 
 
 def prewarm(proc: JobProcess):
+    """Prewarm VAD model for faster session startup."""
     proc.userdata["vad"] = silero.VAD.load()
 
 
@@ -59,70 +51,100 @@ server.setup_fnc = prewarm
 
 @server.rtc_session()
 async def my_agent(ctx: JobContext):
+    """
+    Agent entrypoint with full configuration support.
+    
+    Configuration resolution order:
+    1. Check room metadata for profile_id
+    2. Fetch default profile pointer from DynamoDB
+    3. Load profile with all configuration options
+    4. Build AgentSession with resolved config
+    5. Apply all session behavior, room I/O, and connection options
+    """
     # Logging setup
-    # Add any other context you want in all log entries here
     ctx.log_context_fields = {
         "room": ctx.room.name,
+        "job_id": ctx.job.id,
     }
-
-    # Set up a voice AI pipeline using OpenAI, Cartesia, Deepgram, and the LiveKit turn detector
-    session = AgentSession(
-        # Speech-to-text (STT) is your agent's ears, turning the user's speech into text that the LLM can understand
-        # See all available models at https://docs.livekit.io/agents/models/stt/
-        stt=inference.STT(model="deepgram/nova-3", language="multi"),
-        # A Large Language Model (LLM) is your agent's brain, processing user input and generating a response
-        # See all available models at https://docs.livekit.io/agents/models/llm/
-        llm=inference.LLM(model="openai/gpt-4.1-mini"),
-        # Text-to-speech (TTS) is your agent's voice, turning the LLM's text into speech that the user can hear
-        # See all available models as well as voice selections at https://docs.livekit.io/agents/models/tts/
-        tts=inference.TTS(
-            model="cartesia/sonic-3", voice="9626c31c-bec5-4cca-baa8-f8ba9e84c8bc"
-        ),
-        # VAD and turn detection are used to determine when the user is speaking and when the agent should respond
-        # See more at https://docs.livekit.io/agents/build/turns
-        turn_detection=MultilingualModel(),
-        vad=ctx.proc.userdata["vad"],
-        # allow the LLM to generate a response while waiting for the end of turn
-        # See more at https://docs.livekit.io/agents/build/audio/#preemptive-generation
-        preemptive_generation=True,
+    
+    # Step 1: Resolve profile_id from room metadata or default
+    profile_id = None
+    profile_version = None
+    
+    # Check room metadata for profile_id
+    if ctx.room.metadata:
+        # Room metadata is typically a JSON string, parse it
+        import json
+        try:
+            metadata = json.loads(ctx.room.metadata) if isinstance(ctx.room.metadata, str) else ctx.room.metadata
+            profile_id = metadata.get("profile_id")
+            profile_version = metadata.get("profile_version")
+        except (json.JSONDecodeError, AttributeError):
+            logger.debug("Could not parse room metadata, using defaults")
+    
+    # Step 2: Resolve profile configuration
+    # TODO: Extract tenant_id from context (room, job, or environment)
+    tenant_id = "default"
+    
+    try:
+        profile = await resolve_profile(
+            tenant_id=tenant_id,
+            profile_id=profile_id,
+            profile_version=profile_version,
+        )
+        logger.info(
+            f"Loaded profile: {profile.profile_id} v{profile.version} "
+            f"(mode={profile.mode}, tenant={tenant_id})"
+        )
+    except Exception as e:
+        logger.error(f"Failed to resolve profile: {e}, using defaults", exc_info=True)
+        from .config import get_default_profile
+        profile = get_default_profile()
+    
+    # Step 3: Resolve tools from tool_refs
+    # TODO: Fetch tool definitions from DynamoDB
+    tools = []
+    # For now, tools are empty - implement tool resolution later
+    
+    # Step 4: Build AgentSession with full configuration
+    try:
+        session, room_options = await build_session(
+            profile=profile,
+            vad=ctx.proc.userdata["vad"],
+            job_context=ctx,
+        )
+        logger.debug("AgentSession built successfully with profile configuration")
+    except Exception as e:
+        logger.error(f"Failed to build session: {e}", exc_info=True)
+        raise
+    
+    # Step 5: Create agent with profile instructions
+    agent = ConfigurableAgent(
+        system_prompt=profile.system_prompt,
+        tools=tools,
     )
-
-    # To use a realtime model instead of a voice pipeline, use the following session setup instead.
-    # (Note: This is for the OpenAI Realtime API. For other providers, see https://docs.livekit.io/agents/models/realtime/))
-    # 1. Install livekit-agents[openai]
-    # 2. Set OPENAI_API_KEY in .env.local
-    # 3. Add `from livekit.plugins import openai` to the top of this file
-    # 4. Use the following session setup instead of the version above
-    # session = AgentSession(
-    #     llm=openai.realtime.RealtimeModel(voice="marin")
-    # )
-
-    # # Add a virtual avatar to the session, if desired
-    # # For other providers, see https://docs.livekit.io/agents/models/avatar/
-    # avatar = hedra.AvatarSession(
-    #   avatar_id="...",  # See https://docs.livekit.io/agents/models/avatar/plugins/hedra
-    # )
-    # # Start the avatar and wait for it to join
-    # await avatar.start(session, room=ctx.room)
-
-    # Start the session, which initializes the voice pipeline and warms up the models
+    
+    # Step 6: Start session with all room options
     await session.start(
-        agent=Assistant(),
+        agent=agent,
         room=ctx.room,
-        room_options=room_io.RoomOptions(
-            audio_input=room_io.AudioInputOptions(
-                noise_cancellation=lambda params: (
-                    noise_cancellation.BVCTelephony()
-                    if params.participant.kind
-                    == rtc.ParticipantKind.PARTICIPANT_KIND_SIP
-                    else noise_cancellation.BVC()
-                ),
-            ),
-        ),
+        room_options=room_options,
     )
-
-    # Join the room and connect to the user
+    
+    logger.info(
+        f"Agent session started: profile={profile.profile_id}, "
+        f"mode={profile.mode}, language={profile.language}"
+    )
+    
+    # Step 7: Connect to room
     await ctx.connect()
+    
+    # Step 8: Apply profile limits (if any)
+    # TODO: Implement limit monitoring and enforcement
+    # This would track:
+    # - max_minutes: Total session duration
+    # - max_tool_calls: Total tool calls
+    # - max_tool_calls_per_minute: Rate limiting
 
 
 if __name__ == "__main__":

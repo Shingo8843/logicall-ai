@@ -32,6 +32,31 @@ spec:
                 secretKeyRef:
                   name: livekit-credentials
                   key: LIVEKIT_API_SECRET
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: livekit-credentials
+                  key: OPENAI_API_KEY
+            - name: DEEPGRAM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: livekit-credentials
+                  key: DEEPGRAM_API_KEY
+            - name: CARTESIA_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: livekit-credentials
+                  key: CARTESIA_API_KEY
+            - name: ELEVEN_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: livekit-credentials
+                  key: ELEVEN_API_KEY
+            - name: ASSEMBLYAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: livekit-credentials
+                  key: ASSEMBLYAI_API_KEY
           resources:
             requests:
               memory: "512Mi"

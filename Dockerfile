@@ -35,19 +35,22 @@ RUN apt-get update && apt-get install -y \
 # And set it as the working directory
 WORKDIR /app
 
-# Copy just the dependency files first, for more efficient layer caching
-COPY pyproject.toml ./
-RUN mkdir -p src
+# Copy dependency metadata first for better layer caching.
+# Include README because pyproject references it as the project readme.
+COPY pyproject.toml README.md ./
+COPY uv.lock* ./
 
-# Install Python dependencies using UV
-# For local development, we sync without --locked (uv.lock is optional)
-# In production, you should generate uv.lock and use --locked for reproducibility
-RUN uv sync
+# Install only third-party dependencies in this cached layer.
+# The project itself is installed after source code is copied.
+RUN uv sync --no-install-project
 
 # Copy all remaining application files into the container
 # This includes source code, configuration files, and dependency specifications
 # (Excludes files specified in .dockerignore)
 COPY . .
+
+# Install the local project now that source files are present.
+RUN uv sync
 
 # Change ownership of all app files to the non-privileged user
 # This ensures the application can read/write files as needed
@@ -60,10 +63,10 @@ USER appuser
 # Pre-download any ML models or files the agent needs
 # This ensures the container is ready to run immediately without downloading
 # dependencies at runtime, which improves startup time and reliability
-RUN uv run src/agent.py download-files
+RUN uv run -m src.agent download-files
 
 # Run the application using UV
 # UV will activate the virtual environment and run the agent.
 # For production, use "start" mode (connects to LiveKit Cloud)
 # For local testing, override with "dev" mode
-CMD ["uv", "run", "src/agent.py", "start"]
+CMD ["uv", "run", "-m", "src.agent", "start"]
