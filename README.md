@@ -46,13 +46,24 @@ A complete DevOps pipeline for deploying a LiveKit voice AI agent to Amazon EKS 
       ┌─────────────────┐
       │ LiveKit Agent   │
       │ Pods            │
+      │ (Auto-scaled)    │
       └────────┬────────┘
                │
-               ▼
-      ┌─────────────────┐
-      │ LiveKit Cloud   │
-      │ (Voice AI)       │
-      └─────────────────┘
+               │
+      ┌────────┴────────┐
+      │                │
+      ▼                ▼
+┌──────────┐    ┌──────────────┐
+│   HPA    │◄───│   Metrics    │
+│(Autoscaler)│    │   Server    │
+└──────────┘    └──────────────┘
+      │
+      │
+      ▼
+┌─────────────────┐
+│ LiveKit Cloud   │
+│ (Voice AI)       │
+└─────────────────┘
 ```
 
 ### Components
@@ -61,10 +72,12 @@ A complete DevOps pipeline for deploying a LiveKit voice AI agent to Amazon EKS 
 2. **GitHub Actions CI** - Builds Docker images, pushes to ECR, updates manifests
 3. **Argo CD** - GitOps controller that syncs Kubernetes manifests from Git
 4. **External Secrets Operator** - Syncs secrets from AWS Secrets Manager to Kubernetes
-5. **AWS EKS** - Managed Kubernetes cluster
-6. **AWS ECR** - Container registry for Docker images
-7. **AWS Secrets Manager** - Secure secret storage
-8. **LiveKit Cloud** - Voice AI infrastructure
+5. **Horizontal Pod Autoscaler (HPA)** - Automatically scales pods based on CPU and memory usage
+6. **Metrics Server** - Collects resource metrics for HPA scaling decisions
+7. **AWS EKS** - Managed Kubernetes cluster
+8. **AWS ECR** - Container registry for Docker images
+9. **AWS Secrets Manager** - Secure secret storage
+10. **LiveKit Cloud** - Voice AI infrastructure
 
 ## 📋 Prerequisites
 
@@ -209,6 +222,7 @@ The CI pipeline will:
 │   └── apps/
 │       └── backend/
 │           ├── deployment.yaml  # Kubernetes Deployment
+│           ├── hpa.yaml          # Horizontal Pod Autoscaler
 │           ├── externalsecret.yaml # External Secrets Operator config
 │           ├── external-secrets-sa.yaml # ServiceAccount for ESO
 │           ├── service.yaml      # Kubernetes Service (commented out)
@@ -337,14 +351,103 @@ Edit `infra/eks/terraform.tfvars` to customize:
 
 The LiveKit agent is configured in `gitops/apps/backend/deployment.yaml`:
 
-- **Replicas**: 1 (adjust as needed)
-- **Resources**: 512Mi-1Gi memory, 250m-1000m CPU
+- **Replicas**: Managed by HPA (1-10 pods, auto-scaled)
+- **Resources**: 1Gi memory, 1000m CPU (requests/limits)
 - **Secrets**: Automatically injected from AWS Secrets Manager via External Secrets Operator
 - **Mode**: Production (`start` command) - connects to LiveKit Cloud
 
 **Note**: The agent connects outbound to LiveKit Cloud via WebSocket, so no Kubernetes Service/LoadBalancer is needed.
 
+### Auto-Scaling Configuration
+
+The agent uses **Horizontal Pod Autoscaler (HPA)** for automatic scaling:
+
+- **Min replicas**: 1 (always at least 1 pod running)
+- **Max replicas**: 10 (can scale up to 10 pods)
+- **CPU target**: 70% utilization
+- **Memory target**: 80% utilization
+- **Scale up**: Fast (100% increase or +2 pods every 15 seconds)
+- **Scale down**: Slow (50% decrease every 60 seconds, 5-minute stabilization window)
+
+**Metrics Server**: Required for HPA to function. Install with:
+```bash
+helm repo add metrics-server https://kubernetes-sigs.github.io/metrics-server/
+helm upgrade --install metrics-server metrics-server/metrics-server \
+  --namespace kube-system \
+  --set args="{--kubelet-insecure-tls}" \
+  --wait
+```
+
+**Monitor HPA:**
+```bash
+# Check HPA status
+kubectl get hpa livekit-agent -n apps
+
+# View detailed HPA metrics
+kubectl describe hpa livekit-agent -n apps
+
+# View pod resource usage
+kubectl top pods -n apps -l app=livekit-agent
+```
+
+## 📊 Monitoring and Scaling
+
+### Check HPA Status
+
+```bash
+# View HPA current status
+kubectl get hpa livekit-agent -n apps
+
+# Detailed HPA information
+kubectl describe hpa livekit-agent -n apps
+
+# View current pod metrics
+kubectl top pods -n apps -l app=livekit-agent
+```
+
+### HPA Behavior
+
+- **Scale Up Triggers**: When CPU > 70% OR Memory > 80% (whichever is higher)
+- **Scale Down Triggers**: When BOTH CPU < 70% AND Memory < 80% (with 5-minute stabilization)
+- **Scaling Speed**: 
+  - Up: Very fast (100% increase or +2 pods every 15s)
+  - Down: Conservative (50% decrease every 60s)
+
+### Adjusting HPA Settings
+
+Edit `gitops/apps/backend/hpa.yaml` to change:
+- Min/max replicas
+- CPU/memory targets
+- Scaling behavior (speed, stabilization windows)
+
+After pushing changes, Argo CD will automatically sync the updated HPA configuration.
+
 ## 🐛 Troubleshooting
+
+### HPA Not Scaling
+
+1. **Check if Metrics Server is installed:**
+   ```bash
+   kubectl get deployment metrics-server -n kube-system
+   kubectl top nodes  # Should work if metrics server is running
+   ```
+
+2. **Verify HPA is created:**
+   ```bash
+   kubectl get hpa -n apps
+   kubectl describe hpa livekit-agent -n apps
+   ```
+
+3. **Check for HPA events:**
+   ```bash
+   kubectl describe hpa livekit-agent -n apps | grep -A 10 Events
+   ```
+
+4. **Verify pod resource requests are set:**
+   ```bash
+   kubectl get deployment livekit-agent -n apps -o jsonpath='{.spec.template.spec.containers[0].resources}'
+   ```
+   HPA requires resource requests to calculate utilization percentages.
 
 ### Argo CD Application Not Syncing
 
@@ -487,6 +590,8 @@ For detailed documentation, see [SECRET_MANAGEMENT.md](SECRET_MANAGEMENT.md).
 - [LiveKit Agents Documentation](https://docs.livekit.io/agents/)
 - [External Secrets Operator](https://external-secrets.io/)
 - [AWS Secrets Manager](https://docs.aws.amazon.com/secretsmanager/)
+- [Kubernetes HPA Documentation](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/)
+- [Metrics Server](https://github.com/kubernetes-sigs/metrics-server)
 - [AWS EKS Best Practices](https://aws.github.io/aws-eks-best-practices/)
 
 ## 📄 License
