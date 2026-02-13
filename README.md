@@ -155,7 +155,7 @@ This script will:
    ```bash
    aws secretsmanager create-secret \
      --name livekit-agent-secrets \
-     --secret-string '{"LIVEKIT_URL":"your-url","LIVEKIT_API_KEY":"your-key","LIVEKIT_API_SECRET":"your-secret"}' \
+     --secret-string '{"LIVEKIT_URL":"your-url","LIVEKIT_API_KEY":"your-key","LIVEKIT_API_SECRET":"your-secret","OPENAI_API_KEY":"your-openai-key","ANTHROPIC_API_KEY":"your-anthropic-key"}' \
      --region us-east-1
    ```
 
@@ -560,7 +560,7 @@ powershell -ExecutionPolicy Bypass -File setup-external-secrets.ps1
 # Update secret in AWS Secrets Manager
 aws secretsmanager update-secret \
   --secret-id livekit-agent-secrets \
-  --secret-string '{"LIVEKIT_URL":"...","LIVEKIT_API_KEY":"...","LIVEKIT_API_SECRET":"..."}' \
+  --secret-string '{"LIVEKIT_URL":"...","LIVEKIT_API_KEY":"...","LIVEKIT_API_SECRET":"...","OPENAI_API_KEY":"...","ANTHROPIC_API_KEY":"..."}' \
   --region us-east-1
 
 # External Secrets will automatically sync within 1 hour

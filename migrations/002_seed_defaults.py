@@ -4,7 +4,7 @@ Migration 002: Seed default profile and presets.
 This migration seeds the DynamoDB table with:
 1. Default profile pointer
 2. Default agent profile (v1)
-3. Default model presets (LLM, STT, TTS)
+3. Default model presets (LLM, STT, TTS, REALTIME)
 4. Profile latest pointer
 """
 
@@ -112,6 +112,14 @@ def seed_default_profile(dynamodb):
                 "version": {"S": default_profile.tts_preset_ref.version or "1"},
             }
         }
+
+    if default_profile.realtime_preset_ref:
+        item["realtime_preset_ref"] = {
+            "M": {
+                "id": {"S": default_profile.realtime_preset_ref.id},
+                "version": {"S": default_profile.realtime_preset_ref.version or "1"},
+            }
+        }
     
     # Add limits
     if default_profile.limits:
@@ -126,6 +134,10 @@ def seed_default_profile(dynamodb):
             }
         if limits_map:
             item["limits"] = {"M": limits_map}
+
+    # Add tool refs
+    if default_profile.tool_refs:
+        item["tool_refs"] = {"SS": [str(tool_ref) for tool_ref in default_profile.tool_refs]}
     
     # Add session behavior (simplified - store as JSON string for now)
     behavior = default_profile.session_behavior
@@ -194,12 +206,12 @@ def seed_llm_preset(dynamodb):
     
     item = {
         "pk": {"S": "PRESET#LLM"},
-        "sk": {"S": "ID#gpt-4.1-mini#V#1"},
+        "sk": {"S": "ID#gpt-5.1#V#1"},
         "entity_type": {"S": "preset"},
-        "preset_id": {"S": "gpt-4.1-mini"},
+        "preset_id": {"S": "gpt-5.1"},
         "version": {"S": "1"},
         "provider": {"S": "openai"},
-        "model": {"S": "gpt-4.1-mini"},
+        "model": {"S": "gpt-5.1"},
         "params": {
             "M": {
                 "temperature": {"N": "0.7"},
@@ -275,6 +287,122 @@ def seed_tts_preset(dynamodb):
     return False
 
 
+def seed_realtime_preset(dynamodb):
+    """Seed default realtime preset (Amazon Nova Sonic)."""
+    print("Seeding default realtime preset...")
+
+    item = {
+        "pk": {"S": "PRESET#REALTIME"},
+        "sk": {"S": "ID#amazon.nova-2-sonic-v1:0#V#1"},
+        "entity_type": {"S": "preset"},
+        "preset_id": {"S": "amazon.nova-2-sonic-v1:0"},
+        "version": {"S": "1"},
+        "provider": {"S": "aws"},
+        "model": {"S": "amazon.nova-2-sonic-v1:0"},
+        "params": {
+            "M": {
+                "temperature": {"N": "0.7"},
+                "top_p": {"N": "1.0"},
+                "max_tokens": {"N": "4096"},
+            }
+        },
+        "created_at": {"S": datetime.now(timezone.utc).isoformat()},
+        "updated_at": {"S": datetime.now(timezone.utc).isoformat()},
+    }
+
+    if put_item(dynamodb, item):
+        print("  [OK] Realtime preset created")
+        return True
+    return False
+
+
+def seed_weather_http_tool(dynamodb):
+    """Seed default weather HTTP tool definition."""
+    print("Seeding default weather HTTP tool...")
+
+    now = datetime.now(timezone.utc).isoformat()
+    item = {
+        "pk": {"S": "HTTPTOOL"},
+        "sk": {"S": "ID#weather_current#V#1"},
+        "entity_type": {"S": "http_tool"},
+        "http_tool_id": {"S": "weather_current"},
+        "version": {"S": "1"},
+        "method": {"S": "GET"},
+        "base_url": {"S": "https://api.open-meteo.com"},
+        "path_template": {"S": "/v1/forecast"},
+        "allowed_query_keys": {
+            "L": [
+                {"S": "latitude"},
+                {"S": "longitude"},
+                {"S": "current"},
+                {"S": "timezone"},
+            ]
+        },
+        "headers_static": {"M": {}},
+        "headers_dynamic_allowlist": {"L": []},
+        "timeout_ms": {"N": "8000"},
+        "max_response_bytes": {"N": "8192"},
+        "response_allowlist": {
+            "L": [
+                {"S": "latitude"},
+                {"S": "longitude"},
+                {"S": "timezone"},
+                {"S": "current"},
+            ]
+        },
+        "description": {"S": "Get current weather for coordinates via Open-Meteo."},
+        "created_at": {"S": now},
+        "updated_at": {"S": now},
+    }
+
+    if put_item(dynamodb, item):
+        print("  [OK] Weather HTTP tool created")
+        return True
+    return False
+
+
+def seed_weather_geocode_http_tool(dynamodb):
+    """Seed weather geocoding HTTP tool definition."""
+    print("Seeding weather geocode HTTP tool...")
+
+    now = datetime.now(timezone.utc).isoformat()
+    item = {
+        "pk": {"S": "HTTPTOOL"},
+        "sk": {"S": "ID#weather_geocode#V#1"},
+        "entity_type": {"S": "http_tool"},
+        "http_tool_id": {"S": "weather_geocode"},
+        "version": {"S": "1"},
+        "method": {"S": "GET"},
+        "base_url": {"S": "https://geocoding-api.open-meteo.com"},
+        "path_template": {"S": "/v1/search"},
+        "allowed_query_keys": {
+            "L": [
+                {"S": "name"},
+                {"S": "count"},
+                {"S": "language"},
+                {"S": "country"},
+            ]
+        },
+        "headers_static": {"M": {}},
+        "headers_dynamic_allowlist": {"L": []},
+        "timeout_ms": {"N": "8000"},
+        "max_response_bytes": {"N": "16384"},
+        "response_allowlist": {
+            "L": [
+                {"S": "results"},
+            ]
+        },
+        "description": {"S": "Geocode city/place name to coordinates via Open-Meteo."},
+        "created_at": {"S": now},
+        "updated_at": {"S": now},
+    }
+
+    if put_item(dynamodb, item):
+        print("  [OK] Weather geocode HTTP tool created")
+        return True
+    return False
+
+
 def run_migration():
     """Run the seed migration."""
     dynamodb = boto3.client("dynamodb", region_name=AWS_REGION)
@@ -301,6 +429,9 @@ def run_migration():
     success &= seed_llm_preset(dynamodb)
     success &= seed_stt_preset(dynamodb)
     success &= seed_tts_preset(dynamodb)
+    success &= seed_realtime_preset(dynamodb)
+    success &= seed_weather_http_tool(dynamodb)
+    success &= seed_weather_geocode_http_tool(dynamodb)
     
     return success
 

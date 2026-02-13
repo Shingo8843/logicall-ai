@@ -211,16 +211,17 @@ def get_default_profile() -> AgentProfileConfig:
         profile_id="default",
         version="1",
         tenant_id="default",
-        mode="pipeline",
+        mode="realtime",
         system_prompt="""You are a helpful voice AI assistant. 
         The user is interacting with you via voice, even if you perceive the conversation as text.
         Your responses are concise, to the point, and without any complex formatting or punctuation including emojis, asterisks, or other symbols.
         You are curious, friendly, and have a sense of humor.""",
         language="en",
-        llm_preset_ref=PresetRef(id="gpt-4.1-mini", version="1"),
+        llm_preset_ref=PresetRef(id="gpt-5.1", version="1"),
         stt_preset_ref=PresetRef(id="nova-3", version="1"),
         tts_preset_ref=PresetRef(id="sonic-3", version="1"),
-        tool_refs=[],
+        realtime_preset_ref=PresetRef(id="amazon.nova-2-sonic-v1:0", version="1"),
+        tool_refs=["http:weather_geocode@1", "http:weather_current@1"],
         limits=ProfileLimits(
             max_minutes=30,
             max_tool_calls=50,

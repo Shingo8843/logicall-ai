@@ -296,10 +296,13 @@ def _build_profile_config(profile_data: dict[str, Any]) -> AgentProfileConfig:
             version=preset_data.get("version"),
         )
     
-    llm_ref = _parse_preset_ref(profile_data.get("llm_preset_ref"), "gpt-4.1-mini")
+    llm_ref = _parse_preset_ref(profile_data.get("llm_preset_ref"), "gpt-5.1")
     stt_ref = _parse_preset_ref(profile_data.get("stt_preset_ref"), "nova-3")
     tts_ref = _parse_preset_ref(profile_data.get("tts_preset_ref"), "sonic-3")
-    realtime_ref = _parse_preset_ref(profile_data.get("realtime_preset_ref"), "")
+    realtime_ref = _parse_preset_ref(
+        profile_data.get("realtime_preset_ref"),
+        "amazon.nova-2-sonic-v1:0",
+    )
     
     # Build limits
     # Handle both dict and DynamoDB map format
@@ -449,7 +452,7 @@ def _build_profile_config(profile_data: dict[str, Any]) -> AgentProfileConfig:
         profile_id=profile_id,
         version=version,
         tenant_id=tenant_id,
-        mode=profile_data.get("mode", "pipeline"),
+        mode=profile_data.get("mode", "realtime"),
         system_prompt=profile_data.get("system_prompt", "You are a helpful assistant."),
         language=profile_data.get("language", "en"),
         llm_preset_ref=llm_ref,

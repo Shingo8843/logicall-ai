@@ -287,7 +287,7 @@ async def _resolve_llm_model(preset_ref: PresetRef | None):  # type: ignore
     """Resolve LLM model from preset reference."""
     if preset_ref is None:
         # Default LLM
-        return inference.LLM(model="openai/gpt-4.1-mini")
+        return inference.LLM(model="openai/gpt-5.1")
     
     # Fetch preset from DynamoDB and build model
     preset_data = await _fetch_llm_preset(preset_ref)
@@ -438,55 +438,95 @@ async def _fetch_realtime_preset(preset_ref: PresetRef) -> dict[str, Any] | None
 async def _resolve_realtime_model(preset_ref: PresetRef | None):  # type: ignore
     """Resolve realtime model from preset reference."""
     if preset_ref is None:
-        # Default realtime model
+        # Default realtime model: Amazon Nova Sonic via AWS plugin.
         try:
-            from livekit.plugins import openai
-            return openai.realtime.RealtimeModel(voice="marin")
+            from livekit.plugins import aws
+
+            return aws.realtime.RealtimeModel(model="amazon.nova-2-sonic-v1:0")
         except ImportError:
-            logger.error("OpenAI plugin not installed for realtime model")
+            logger.error("AWS plugin not installed for realtime model")
             raise
     
     # Fetch preset from DynamoDB and build model
     preset_data = await _fetch_realtime_preset(preset_ref)
     
     if preset_data is None:
-        # Fallback to default OpenAI realtime
+        # Fallback to default Amazon Nova Sonic realtime.
         logger.warning(f"Realtime preset not found, falling back to default: {preset_ref.id}")
         try:
-            from livekit.plugins import openai
-            return openai.realtime.RealtimeModel(voice="marin")
+            from livekit.plugins import aws
+
+            return aws.realtime.RealtimeModel(model="amazon.nova-2-sonic-v1:0")
         except ImportError:
-            logger.error("OpenAI plugin not installed for realtime model")
+            logger.error("AWS plugin not installed for realtime model")
             raise
     
     # Extract preset configuration
-    provider = preset_data.get("provider", "openai")
+    provider = str(preset_data.get("provider", "aws")).lower()
     model = preset_data.get("model")
-    voice = preset_data.get("voice", "marin")
+    voice = preset_data.get("voice")
+    region = preset_data.get("region")
     params = preset_data.get("params", {})
     
-    # Currently only OpenAI realtime is supported
-    if provider != "openai":
-        logger.warning(f"Realtime provider {provider} not supported, using OpenAI")
-        provider = "openai"
-    
+    if provider in {"aws", "amazon", "bedrock"}:
+        try:
+            from livekit.plugins import aws
+
+            realtime_kwargs: dict[str, Any] = {}
+            if model:
+                realtime_kwargs["model"] = str(model)
+            if voice:
+                realtime_kwargs["voice"] = str(voice)
+            if region:
+                realtime_kwargs["region"] = str(region)
+            if params and isinstance(params, dict):
+                if "temperature" in params:
+                    realtime_kwargs["temperature"] = float(params["temperature"])
+                if "top_p" in params:
+                    realtime_kwargs["top_p"] = float(params["top_p"])
+                if "max_tokens" in params:
+                    realtime_kwargs["max_tokens"] = int(params["max_tokens"])
+
+            if "model" not in realtime_kwargs:
+                realtime_kwargs["model"] = "amazon.nova-2-sonic-v1:0"
+
+            logger.debug(
+                "Resolving Realtime model: aws model=%s voice=%s region=%s",
+                realtime_kwargs.get("model"),
+                realtime_kwargs.get("voice"),
+                realtime_kwargs.get("region"),
+            )
+            return _construct_with_supported_kwargs(
+                "aws.realtime.RealtimeModel",
+                aws.realtime.RealtimeModel,
+                realtime_kwargs,
+            )
+        except ImportError:
+            logger.error("AWS plugin not installed for realtime model")
+            raise
+
+    if provider == "openai":
+        try:
+            from livekit.plugins import openai
+
+            realtime_kwargs = {"voice": str(voice) if voice else "marin"}
+            logger.debug("Resolving Realtime model: openai voice=%s", realtime_kwargs["voice"])
+            return _construct_with_supported_kwargs(
+                "openai.realtime.RealtimeModel",
+                openai.realtime.RealtimeModel,
+                realtime_kwargs,
+            )
+        except ImportError:
+            logger.error("OpenAI plugin not installed for realtime model")
+            raise
+
+    logger.warning("Realtime provider %s not supported, falling back to AWS Nova Sonic", provider)
     try:
-        from livekit.plugins import openai
-        
-        # Build realtime model with voice
-        realtime_kwargs = {"voice": voice}
-        
-        # Add any additional params if supported
-        # (RealtimeModel may have other parameters in the future)
-        if params:
-            # Add params that are supported by RealtimeModel
-            # This is a placeholder for future parameter support
-            pass
-        
-        logger.debug(f"Resolving Realtime model: {provider} with voice {voice}")
-        return openai.realtime.RealtimeModel(**realtime_kwargs)
+        from livekit.plugins import aws
+
+        return aws.realtime.RealtimeModel(model="amazon.nova-2-sonic-v1:0")
     except ImportError:
-        logger.error("OpenAI plugin not installed for realtime model")
+        logger.error("AWS plugin not installed for realtime model")
         raise
 
 
@@ -550,11 +590,14 @@ def _build_room_options(room_config: Any) -> room_io.RoomOptions:  # type: ignor
     # Audio output
     audio_output = room_config.audio_output
     if isinstance(audio_output, AudioOutputOptions):
-        audio_output_opts = room_io.AudioOutputOptions(
-            sample_rate=audio_output.sample_rate,
-            num_channels=audio_output.num_channels,
-            track_name=audio_output.track_name,
-        )
+        audio_output_kwargs: dict[str, Any] = {
+            "sample_rate": audio_output.sample_rate,
+            "num_channels": audio_output.num_channels,
+        }
+        # Avoid passing None through to RTC create_audio_track(name=...), which expects str.
+        if audio_output.track_name:
+            audio_output_kwargs["track_name"] = audio_output.track_name
+        audio_output_opts = room_io.AudioOutputOptions(**audio_output_kwargs)
     elif audio_output is False:
         audio_output_opts = False
     else:
