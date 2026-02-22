@@ -460,6 +460,7 @@ def _build_profile_config(profile_data: dict[str, Any]) -> AgentProfileConfig:
         tts_preset_ref=tts_ref,
         realtime_preset_ref=realtime_ref,
         tool_refs=profile_data.get("tool_refs", []),
+        sip_outbound_trunk_id=profile_data.get("sip_outbound_trunk_id"),
         limits=limits,
         session_behavior=session_behavior,
         room_options=room_options,

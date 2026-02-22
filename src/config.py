@@ -179,6 +179,9 @@ class AgentProfileConfig:
     # Tool References
     tool_refs: list[str] = field(default_factory=list)
     
+    # Telephony
+    sip_outbound_trunk_id: str | None = None
+    
     # Limits
     limits: ProfileLimits = field(default_factory=ProfileLimits)
     
@@ -222,6 +225,7 @@ def get_default_profile() -> AgentProfileConfig:
         tts_preset_ref=PresetRef(id="sonic-3", version="1"),
         realtime_preset_ref=PresetRef(id="amazon.nova-2-sonic-v1:0", version="1"),
         tool_refs=["http:weather_geocode@1", "http:weather_current@1"],
+        sip_outbound_trunk_id=None,
         limits=ProfileLimits(
             max_minutes=30,
             max_tool_calls=50,

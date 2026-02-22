@@ -13,7 +13,8 @@ from typing import Any
 
 import boto3
 from botocore.exceptions import ClientError
-from livekit.agents import FunctionTool, RunContext, function_tool
+from livekit import api
+from livekit.agents import FunctionTool, RunContext, function_tool, get_job_context
 
 logger = logging.getLogger("agent_tools")
 
@@ -25,7 +26,20 @@ HTTP_REF_PREFIX = "http:"
 async def _hang_up(ctx: RunContext, reason: str = "Call completed") -> str:
     """End the active call/session."""
     logger.info("hang_up requested: %s", reason)
-    ctx.session.shutdown(drain=True)
+
+    job_ctx = get_job_context()
+    if job_ctx is not None:
+        try:
+            await job_ctx.api.room.delete_room(
+                api.DeleteRoomRequest(room=job_ctx.room.name)
+            )
+            logger.info("Room %s deleted, SIP participant disconnected", job_ctx.room.name)
+        except Exception as e:
+            logger.error("Failed to delete room for hang_up: %s", e)
+            ctx.session.shutdown(drain=True)
+    else:
+        ctx.session.shutdown(drain=True)
+
     return f"Ending the call now. Reason: {reason}"
 
 
