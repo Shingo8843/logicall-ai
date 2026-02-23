@@ -37,6 +37,11 @@ spec:
                 secretKeyRef:
                   name: livekit-credentials
                   key: OPENAI_API_KEY
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: livekit-credentials
+                  key: ANTHROPIC_API_KEY
             - name: DEEPGRAM_API_KEY
               valueFrom:
                 secretKeyRef:

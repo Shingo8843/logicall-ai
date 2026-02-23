@@ -1,0 +1,136 @@
+name: Deploy API Services (Lambda)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "api/**"
+  workflow_dispatch:
+    inputs:
+      service:
+        description: "Service to deploy (or 'all')"
+        required: false
+        default: "all"
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+
+jobs:
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      services: ${{ steps.set-matrix.outputs.services }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Determine services to deploy
+        id: set-matrix
+        run: |
+          if [ "${{ github.event.inputs.service }}" = "all" ] || [ -z "${{ github.event.inputs.service }}" ]; then
+            # Auto-detect changed services or deploy all on manual trigger
+            SERVICES=$(ls -d api/*/main.py 2>/dev/null | sed 's|api/||;s|/main.py||' | jq -R -s -c 'split("\n") | map(select(. != ""))')
+          else
+            SERVICES='["${{ github.event.inputs.service }}"]'
+          fi
+          echo "services=$SERVICES" >> $GITHUB_OUTPUT
+          echo "Deploying: $SERVICES"
+
+  deploy:
+    needs: detect-changes
+    runs-on: ubuntu-latest
+    environment: AWS
+    strategy:
+      matrix:
+        service: ${{ fromJson(needs.detect-changes.outputs.services) }}
+      fail-fast: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          role-session-name: GitHubActions-API-Deploy
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Install dependencies and package
+        run: |
+          SERVICE=${{ matrix.service }}
+          WORK_DIR="api/$SERVICE"
+          BUILD_DIR="/tmp/build/$SERVICE"
+
+          mkdir -p "$BUILD_DIR"
+
+          # Install service dependencies
+          if [ -f "$WORK_DIR/requirements.txt" ]; then
+            pip install -r "$WORK_DIR/requirements.txt" -t "$BUILD_DIR" --platform manylinux2014_x86_64 --only-binary=:all: --python-version 3.12
+          fi
+
+          # Copy service code
+          cp -r "$WORK_DIR"/* "$BUILD_DIR/"
+
+          # Copy common utilities
+          mkdir -p "$BUILD_DIR/api/common"
+          cp api/__init__.py "$BUILD_DIR/api/"
+          cp api/common/*.py "$BUILD_DIR/api/common/"
+
+          # Create deployment zip
+          cd "$BUILD_DIR"
+          zip -r "/tmp/$SERVICE.zip" . -x "*.pyc" "__pycache__/*"
+
+          echo "Package size: $(du -h /tmp/$SERVICE.zip | cut -f1)"
+
+      - name: Deploy to Lambda
+        run: |
+          SERVICE=${{ matrix.service }}
+          FUNCTION_NAME="logicall-${SERVICE//_/-}"
+
+          # Check if function exists
+          if aws lambda get-function --function-name "$FUNCTION_NAME" 2>/dev/null; then
+            echo "Updating existing function: $FUNCTION_NAME"
+            aws lambda update-function-code \
+              --function-name "$FUNCTION_NAME" \
+              --zip-file "fileb:///tmp/$SERVICE.zip"
+          else
+            echo "Function $FUNCTION_NAME does not exist."
+            echo "Create it first in AWS Console or via IaC with:"
+            echo "  Runtime: python3.12"
+            echo "  Handler: main.handler"
+            echo "  Environment: LIVEKIT_SECRET_ID=livekit-agent-secrets"
+            exit 1
+          fi
+
+      - name: Create/update function URL
+        continue-on-error: true
+        run: |
+          FUNCTION_NAME="logicall-${SERVICE//_/-}"
+
+          # Ensure function URL exists
+          URL=$(aws lambda get-function-url-config --function-name "$FUNCTION_NAME" --query 'FunctionUrl' --output text 2>/dev/null || echo "")
+          if [ -z "$URL" ]; then
+            aws lambda create-function-url-config \
+              --function-name "$FUNCTION_NAME" \
+              --auth-type NONE
+            aws lambda add-permission \
+              --function-name "$FUNCTION_NAME" \
+              --statement-id FunctionURLAllowPublicAccess \
+              --action lambda:InvokeFunctionUrl \
+              --principal "*" \
+              --function-url-auth-type NONE 2>/dev/null || true
+            URL=$(aws lambda get-function-url-config --function-name "$FUNCTION_NAME" --query 'FunctionUrl' --output text)
+          fi
+
+          echo "Function URL: $URL"
