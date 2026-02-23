@@ -126,15 +126,19 @@ jobs:
 
           mkdir -p "$BUILD_DIR"
 
+          # Install service dependencies
           if [ -f "$WORK_DIR/requirements.txt" ]; then
             pip install -r "$WORK_DIR/requirements.txt" -t "$BUILD_DIR" --platform manylinux2014_x86_64 --only-binary=:all: --python-version 3.12
           fi
 
+          # Copy service code
           cp -r "$WORK_DIR"/* "$BUILD_DIR/"
+          # Copy common utilities
           mkdir -p "$BUILD_DIR/api/common"
           cp api/__init__.py "$BUILD_DIR/api/" 2>/dev/null || true
           cp api/common/*.py "$BUILD_DIR/api/common/" 2>/dev/null || true
 
+          # Create deployment zip
           cd "$BUILD_DIR"
           zip -r "/tmp/$SERVICE.zip" . -x "*.pyc" "__pycache__/*" "*.dist-info/*"
           echo "Package size: $(du -h /tmp/$SERVICE.zip | cut -f1)"

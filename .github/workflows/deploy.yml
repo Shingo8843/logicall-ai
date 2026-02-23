@@ -1,11 +1,12 @@
-name: Deploy EKS Cluster and Argo CD
+name: Deploy EKS Cluster and Argo CD (DISABLED)
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
     inputs:
+      confirm:
+        description: 'Type "deploy-eks" to confirm'
+        required: true
+        type: string
       destroy_first:
         description: 'Destroy existing resources before creating new ones'
         required: false
@@ -25,7 +26,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     environment: AWS
-    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    if: github.event.inputs.confirm == 'deploy-eks'
 
     steps:
       - name: Checkout code
