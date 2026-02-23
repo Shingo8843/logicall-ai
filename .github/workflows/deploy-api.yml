@@ -1,0 +1,158 @@
+name: Deploy API Services (Lambda)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "api/**"
+  workflow_dispatch:
+    inputs:
+      service:
+        description: "Service to deploy (or 'all')"
+        required: false
+        default: "all"
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+
+jobs:
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      services: ${{ steps.set-matrix.outputs.services }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Determine services to deploy
+        id: set-matrix
+        run: |
+          if [ "${{ github.event.inputs.service }}" = "all" ] || [ -z "${{ github.event.inputs.service }}" ]; then
+            SERVICES=$(ls -d api/*/main.py 2>/dev/null | sed 's|api/||;s|/main.py||' | jq -R -s -c 'split("\n") | map(select(. != ""))')
+          else
+            SERVICES='["${{ github.event.inputs.service }}"]'
+          fi
+          if [ "$SERVICES" = "[]" ] || [ -z "$SERVICES" ]; then
+            SERVICES='["outbound_trigger"]'
+          fi
+          echo "services=$SERVICES" >> $GITHUB_OUTPUT
+          echo "Deploying: $SERVICES"
+
+  deploy:
+    needs: detect-changes
+    runs-on: ubuntu-latest
+    environment: AWS
+    strategy:
+      matrix:
+        service: ${{ fromJson(needs.detect-changes.outputs.services) }}
+      fail-fast: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          role-session-name: GitHubActions-API-Deploy
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Ensure Lambda function exists
+        id: ensure-lambda
+        run: |
+          SERVICE="${{ matrix.service }}"
+          FUNCTION_NAME="logicall-${SERVICE//_/-}"
+
+          if aws lambda get-function --function-name "$FUNCTION_NAME" 2>/dev/null; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "Function $FUNCTION_NAME already exists"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "Function $FUNCTION_NAME will be created"
+
+            # Create minimal bootstrap zip
+            echo 'def handler(event, context): return {"statusCode": 200, "body": "bootstrap"}' > main.py
+            zip -q bootstrap.zip main.py
+
+            # Create IAM role if missing
+            ROLE_NAME="logicall-${SERVICE//_/-}-role"
+            if ! aws iam get-role --role-name "$ROLE_NAME" 2>/dev/null; then
+              aws iam create-role --role-name "$ROLE_NAME" \
+                --assume-role-policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"lambda.amazonaws.com"},"Action":"sts:AssumeRole"}]}'
+              aws iam attach-role-policy --role-name "$ROLE_NAME" \
+                --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+              aws iam put-role-policy --role-name "$ROLE_NAME" --policy-name secrets-access \
+                --policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"secretsmanager:GetSecretValue","Resource":"arn:aws:secretsmanager:'$AWS_REGION':*:secret:livekit-agent-secrets*"}]}'
+              echo "Waiting 10s for IAM role propagation..."
+              sleep 10
+            fi
+
+            ROLE_ARN=$(aws iam get-role --role-name "$ROLE_NAME" --query 'Role.Arn' --output text)
+            aws lambda create-function \
+              --function-name "$FUNCTION_NAME" \
+              --runtime python3.12 \
+              --role "$ROLE_ARN" \
+              --handler main.handler \
+              --zip-file fileb://bootstrap.zip \
+              --timeout 30 \
+              --memory-size 256 \
+              --environment "Variables={LIVEKIT_SECRET_ID=livekit-agent-secrets,DEFAULT_AGENT_NAME=logicall-agent,LOG_LEVEL=INFO}"
+
+            # Create function URL
+            aws lambda create-function-url-config --function-name "$FUNCTION_NAME" --auth-type NONE
+            aws lambda add-permission --function-name "$FUNCTION_NAME" \
+              --statement-id FunctionURLPublicAccess --action lambda:InvokeFunctionUrl \
+              --principal '*' --function-url-auth-type NONE 2>/dev/null || true
+
+            echo "Created $FUNCTION_NAME with function URL"
+          fi
+
+      - name: Install dependencies and package
+        run: |
+          SERVICE=${{ matrix.service }}
+          WORK_DIR="api/$SERVICE"
+          BUILD_DIR="/tmp/build/$SERVICE"
+
+          mkdir -p "$BUILD_DIR"
+
+          if [ -f "$WORK_DIR/requirements.txt" ]; then
+            pip install -r "$WORK_DIR/requirements.txt" -t "$BUILD_DIR" --platform manylinux2014_x86_64 --only-binary=:all: --python-version 3.12
+          fi
+
+          cp -r "$WORK_DIR"/* "$BUILD_DIR/"
+          mkdir -p "$BUILD_DIR/api/common"
+          cp api/__init__.py "$BUILD_DIR/api/" 2>/dev/null || true
+          cp api/common/*.py "$BUILD_DIR/api/common/" 2>/dev/null || true
+
+          cd "$BUILD_DIR"
+          zip -r "/tmp/$SERVICE.zip" . -x "*.pyc" "__pycache__/*" "*.dist-info/*"
+          echo "Package size: $(du -h /tmp/$SERVICE.zip | cut -f1)"
+
+      - name: Deploy to Lambda
+        run: |
+          SERVICE=${{ matrix.service }}
+          FUNCTION_NAME="logicall-${SERVICE//_/-}"
+
+          aws lambda update-function-code \
+            --function-name "$FUNCTION_NAME" \
+            --zip-file "fileb:///tmp/$SERVICE.zip"
+
+          echo "Updated $FUNCTION_NAME"
+
+      - name: Output function URL
+        run: |
+          FUNCTION_NAME="logicall-${{ matrix.service }}"
+          FUNCTION_NAME="${FUNCTION_NAME//_/-}"
+          URL=$(aws lambda get-function-url-config --function-name "$FUNCTION_NAME" --query 'FunctionUrl' --output text 2>/dev/null || echo "")
+          echo "Function URL: $URL"
