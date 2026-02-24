@@ -1,6 +1,6 @@
 # Logicall AI - LiveKit Voice Agent on AWS EKS
 
-A complete DevOps pipeline for deploying a LiveKit voice AI agent to Amazon EKS using Terraform, GitHub Actions, Argo CD, and External Secrets Operator.
+A configurable LiveKit voice AI agent with DynamoDB-driven profiles, deployed to Amazon EKS. Includes an outbound-call trigger API (FastAPI + AWS Lambda). The repo provides a full DevOps pipeline using Terraform, GitHub Actions, Argo CD, and External Secrets Operator.
 
 ## 🏗️ Architecture
 
@@ -68,27 +68,26 @@ A complete DevOps pipeline for deploying a LiveKit voice AI agent to Amazon EKS 
 
 ### Components
 
-1. **Terraform** - Provisions EKS cluster, VPC, IAM roles, and networking
-2. **GitHub Actions CI** - Builds Docker images, pushes to ECR, updates manifests
-3. **Argo CD** - GitOps controller that syncs Kubernetes manifests from Git
-4. **External Secrets Operator** - Syncs secrets from AWS Secrets Manager to Kubernetes
-5. **Horizontal Pod Autoscaler (HPA)** - Automatically scales pods based on CPU and memory usage
-6. **Metrics Server** - Collects resource metrics for HPA scaling decisions
-7. **AWS EKS** - Managed Kubernetes cluster
-8. **AWS ECR** - Container registry for Docker images
-9. **AWS Secrets Manager** - Secure secret storage
+1. **LiveKit Agent** (`src/`) - Configurable voice agent; profiles and presets stored in **DynamoDB**
+2. **Outbound Trigger API** (`api/outbound_trigger/`) - FastAPI app (Mangum) to dispatch outbound calls; deployable as **AWS Lambda**
+3. **Terraform** - Provisions EKS cluster, VPC, IAM roles, and networking
+4. **GitHub Actions** - CI builds agent image and deploys to ECR; separate workflow deploys API services to Lambda
+5. **Argo CD** - GitOps controller that syncs Kubernetes manifests from Git
+6. **External Secrets Operator** - Syncs secrets from AWS Secrets Manager to Kubernetes
+7. **Horizontal Pod Autoscaler (HPA)** - Scales agent pods by CPU/memory
+8. **Metrics Server** - Resource metrics for HPA
+9. **AWS EKS / ECR / Secrets Manager** - Cluster, container registry, and secret storage
 10. **LiveKit Cloud** - Voice AI infrastructure
 
 ## 📋 Prerequisites
-- AWS Account with appropriate permissions
-- GitHub repository (public or private)
-- GitHub repository variables configured:
+- **Python** 3.10–3.14 (project uses [uv](https://docs.astral.sh/uv/) for dependencies)
+- **AWS Account** with appropriate permissions
+- **GitHub** repository variables:
   - `AWS_ROLE_ARN` - IAM role ARN for GitHub Actions OIDC
   - `AWS_REGION` (optional, defaults to `us-east-1`)
   - `CLUSTER_NAME` (optional, defaults to `logicall-ai-cluster`)
-- Terraform >= 1.6 (for local runs)
-- AWS CLI configured (for local kubectl access)
-- kubectl installed (for local access)
+- **Terraform** >= 1.6 (for local infra runs)
+- **AWS CLI** and **kubectl** (for cluster access)
 
 ## 🚀 Quick Start
 
@@ -102,10 +101,10 @@ Go to **Settings → Secrets and variables → Actions → Variables** and set:
 
 ### 2. Deploy Infrastructure
 
-The infrastructure is deployed automatically via GitHub Actions when you push to `main`, or you can trigger it manually:
+EKS and Argo CD are deployed via **manual** workflow dispatch (the workflow is disabled for automatic runs):
 
-1. Go to **Actions → Deploy EKS Cluster and Argo CD**
-2. Click **Run workflow**
+1. Go to **Actions → Deploy EKS Cluster and Argo CD (DISABLED)**
+2. Click **Run workflow**, set the confirm input to `deploy-eks`
 3. Wait for deployment (~7-10 minutes)
 
 ### 3. Access Services
@@ -125,7 +124,7 @@ kubectl get svc argocd-server -n argocd -o jsonpath='{.status.loadBalancer.ingre
 # Get Argo CD password
 kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
 
-# Get Backend URL
+# Get Backend/LoadBalancer URL (if a Service exists)
 kubectl get svc backend -n apps -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
 ```
 
@@ -184,62 +183,102 @@ kubectl get externalsecret livekit-credentials -n apps
 kubectl get secret livekit-credentials -n apps
 ```
 
-See [SECRET_MANAGEMENT.md](SECRET_MANAGEMENT.md) for detailed documentation.
+See the **Secret Management** section below; a separate `SECRET_MANAGEMENT.md` may exist for deeper detail.
 
-### 5. Deploy Backend Application
+### 5. Deploy Agent and API
 
-The backend is automatically deployed when you:
+- **LiveKit agent (EKS)**  
+  Pushes to `src/`, `Dockerfile`, or `pyproject.toml` on `main` trigger **CI - Build and Deploy Backend**: build image, push to ECR (`backend` repo), update `gitops/apps/backend/deployment.yaml`, then Argo CD syncs the `livekit-agent` deployment.
 
-1. Push changes to `src/`, `Dockerfile`, or `pyproject.toml`
-2. Or manually trigger **Actions → CI - Build and Deploy Backend**
-
-The CI pipeline will:
-- Build Docker image
-- Push to ECR
-- Update `gitops/apps/backend/deployment.yaml` with new image tag
-- Commit and push the change
-- Argo CD automatically syncs the new image to the cluster
+- **Outbound trigger API (Lambda)**  
+  Pushes under `api/**` trigger **Deploy API Services (Lambda)** to deploy the FastAPI outbound-trigger app as Lambda.
 
 ## 📁 Repository Structure
 
 ```
 .
-├── app/                          # Python FastAPI backend
-│   └── main.py                   # FastAPI application
-├── Dockerfile                    # Container image definition
-├── requirements.txt              # Python dependencies
+├── src/                          # LiveKit voice agent
+│   ├── agent.py                  # Agent entrypoint (cli, start/dev)
+│   ├── session_builder.py        # Session/config wiring
+│   ├── config.py                 # Configuration dataclasses
+│   ├── profile_resolver.py       # DynamoDB profile resolution
+│   └── tools.py                  # Agent tools
 │
-├── infra/                        # Infrastructure as Code
-│   └── eks/
-│       ├── main.tf               # EKS cluster, VPC, IAM
-│       ├── variables.tf         # Terraform variables
-│       └── terraform.tfvars     # Variable values
+├── api/                          # API services
+│   ├── run_local.py              # Run any API locally (e.g. outbound_trigger)
+│   ├── common/                   # Shared helpers (secrets, LiveKit client)
+│   └── outbound_trigger/         # Outbound-call trigger (FastAPI + Mangum → Lambda)
+│       ├── main.py
+│       ├── requirements.txt
+│       └── src/routes/trigger.py
 │
-├── gitops/                       # GitOps manifests
-│   ├── argocd/
-│   │   └── root-app.yaml        # Argo CD Application
-│   └── apps/
-│       └── backend/
-│           ├── deployment.yaml  # Kubernetes Deployment
-│           ├── hpa.yaml          # Horizontal Pod Autoscaler
-│           ├── externalsecret.yaml # External Secrets Operator config
-│           ├── external-secrets-sa.yaml # ServiceAccount for ESO
-│           ├── service.yaml      # Kubernetes Service (commented out)
-│           └── namespace.yaml   # Namespace definition
+├── migrations/                   # DynamoDB migrations (agent profiles)
+│   ├── README.md
+│   ├── run_migrations.py
+│   ├── 001_create_table.py
+│   ├── 002_seed_defaults.py
+│   └── table-definition.json
 │
-├── .github/
-│   └── workflows/
-│       ├── deploy.yml           # EKS + Argo CD deployment
-│       └── ci-backend.yaml     # CI pipeline (build & deploy)
+├── Dockerfile                    # Agent image (uv, Python 3.13)
+├── docker-compose.yml            # Local agent in dev mode
+├── pyproject.toml                # Dependencies (uv); no top-level requirements.txt
+├── uv.lock
 │
-├── infra/eks/
-│   ├── main.tf                  # EKS cluster, VPC, IAM
-│   ├── external-secrets.tf      # External Secrets IAM role
-│   ├── variables.tf             # Terraform variables
-│   └── terraform.tfvars         # Variable values
+├── infra/eks/                    # Terraform
+│   ├── main.tf
+│   ├── external-secrets.tf
+│   ├── variables.tf
+│   └── terraform.tfvars
 │
-└── *.ps1                         # Helper scripts (Windows)
+├── gitops/
+│   ├── argocd/root-app.yaml
+│   └── apps/backend/
+│       ├── deployment.yaml       # livekit-agent Deployment
+│       ├── hpa.yaml
+│       ├── externalsecret.yaml
+│       ├── external-secrets-sa.yaml
+│       ├── service.yaml
+│       └── namespace.yaml
+│
+├── .github/workflows/
+│   ├── deploy.yml                # EKS + Argo CD (manual dispatch)
+│   ├── ci-backend.yaml           # Build & deploy agent image to EKS
+│   └── deploy-api.yml            # Deploy API services (e.g. Lambda)
+│
+└── *.ps1                         # Helper scripts (see Helper Scripts)
 ```
+
+## 🖥️ Local Development
+
+### Agent (LiveKit)
+
+- **With Docker:**  
+  `docker-compose up` runs the agent in **dev** mode (connects to LiveKit Cloud). Ensure `.env.local` exists with `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, and any TTS/STT keys (OpenAI, Anthropic, etc.).
+
+- **With uv:**  
+  From repo root: `uv sync` then `uv run -m src.agent dev`.
+
+### Outbound trigger API
+
+Run the FastAPI app locally (default port 8010):
+
+```bash
+# From repo root (requires uvicorn in path or install api deps)
+python api/run_local.py outbound_trigger
+# Optional: --port 9000 --host 127.0.0.1
+```
+
+Docs at `http://127.0.0.1:8010/docs`.
+
+### DynamoDB (profiles)
+
+Agent configuration is driven by DynamoDB. Run migrations once (see `migrations/README.md`):
+
+```bash
+python migrations/run_migrations.py
+```
+
+Set `DYNAMODB_TABLE_NAME` (default `logicall_agent_config`) and `AWS_REGION` in `.env.local` or environment.
 
 ## 🔄 Deployment Flow
 
@@ -261,22 +300,18 @@ Backend Namespace Created
 
 ### Application Updates (Every Push)
 
+**Agent (EKS):**
 ```
-Code Change in app/
-    ↓
-GitHub Actions (ci-backend.yaml)
-    ↓
-Build Docker Image
-    ↓
-Push to ECR
-    ↓
-Update deployment.yaml (Git)
-    ↓
-Argo CD Detects Change
-    ↓
-Sync to Cluster
-    ↓
-New Pods Running
+Change in src/, Dockerfile, or pyproject.toml
+    → CI - Build and Deploy Backend
+    → Build image → ECR → update deployment.yaml → Argo CD syncs livekit-agent
+```
+
+**API (Lambda):**
+```
+Change in api/**
+    → Deploy API Services (Lambda)
+    → Deploy outbound_trigger (and other API services) to Lambda
 ```
 
 ## 🔐 Accessing the Cluster
@@ -308,18 +343,26 @@ After deployment, you'll have:
   - Username: `admin`
   - Password: (from workflow output or kubectl command above)
 
-- **Backend API**: `http://<loadbalancer-dns>`
-  - Health endpoint: `http://<loadbalancer-dns>/health`
+- **Backend/API** (if a Service is configured): `http://<loadbalancer-dns>`  
+  The LiveKit agent itself connects outbound to LiveKit Cloud and does not expose HTTP. The outbound trigger API is deployed as Lambda (see **Deploy API Services** workflow).
 
 ## 🛠️ Helper Scripts
 
 ### Windows PowerShell Scripts
 
-- `get-urls.ps1` - Get all service URLs and credentials
-- `destroy-all.ps1` - Destroy all Terraform-managed resources
-- `cleanup-orphaned-resources.ps1` - Clean up orphaned VPCs and resources
+- `get-urls.ps1` - Get service URLs and credentials (Argo CD, backend)
+- `destroy-all.ps1` - Destroy Terraform-managed resources
+- `setup-external-secrets.ps1` - Configure External Secrets from `.env.local`
+- `create-livekit-secret.ps1` - Create/update LiveKit secret in AWS Secrets Manager
+- `test-docker.ps1` - Test agent Docker build/run
+- `test-agent.ps1` - Test agent locally
+- `check-costly-resources.ps1` - List resources that may incur cost
+- `cleanup-orphaned-resources.ps1` - Clean orphaned VPCs/resources
 - `cleanup-elastic-ips.ps1` - Release unassociated Elastic IPs
-- `check-costly-resources.ps1` - Check for resources that could cost money
+- `cleanup-terraform-state.ps1` - Clean Terraform state
+- `cleanup-vpcs.ps1` - Clean up VPCs
+
+**Migrations:** `migrations/create_table.ps1`, `migrations/create_table_aws_cli.ps1`, `migrations/quick_setup.ps1`
 
 ### Usage Examples
 
@@ -330,7 +373,10 @@ powershell -ExecutionPolicy Bypass -File get-urls.ps1
 # Destroy everything
 powershell -ExecutionPolicy Bypass -File destroy-all.ps1
 
-# Check for costly resources
+# Setup external secrets (from .env.local)
+powershell -ExecutionPolicy Bypass -File setup-external-secrets.ps1
+
+# Check costly resources
 powershell -ExecutionPolicy Bypass -File check-costly-resources.ps1
 ```
 
@@ -348,7 +394,7 @@ Edit `infra/eks/terraform.tfvars` to customize:
 
 ### LiveKit Agent Configuration
 
-The LiveKit agent is configured in `gitops/apps/backend/deployment.yaml`:
+The agent runs as the **livekit-agent** Deployment; its spec is in `gitops/apps/backend/deployment.yaml`:
 
 - **Replicas**: Managed by HPA (1-10 pods, auto-scaled)
 - **Resources**: 1Gi memory, 1000m CPU (requests/limits)
@@ -457,23 +503,23 @@ After pushing changes, Argo CD will automatically sync the updated HPA configura
    kubectl get application root-app -n argocd -o yaml
    ```
 
-### Backend Pods Not Starting
+### Agent Pods Not Starting (livekit-agent)
 
 1. Check pod status:
    ```bash
-   kubectl get pods -n apps
+   kubectl get pods -n apps -l app=livekit-agent
    kubectl describe pod <pod-name> -n apps
    kubectl logs <pod-name> -n apps
    ```
 
-2. Verify image exists in ECR:
+2. Verify image exists in ECR (repository name is `backend`):
    ```bash
    aws ecr describe-images --repository-name backend --region us-east-1
    ```
 
 3. Check deployment:
    ```bash
-   kubectl get deployment backend -n apps -o yaml
+   kubectl get deployment livekit-agent -n apps -o yaml
    ```
 
 ### Cannot Access Cluster
@@ -518,10 +564,10 @@ If Terraform destroy fails:
 
 ## 📝 Notes
 
-- **GitOps Principle**: Never manually `kubectl apply` application manifests. All changes go through Git.
-- **Image Updates**: CI pipeline automatically updates image tags. Manual edits will be overwritten.
-- **State Management**: Terraform state is stored in S3: `logicall-ai-terraform-state-<account-id>`
-- **Security**: No hardcoded credentials. All secrets use GitHub variables/secrets.
+- **GitOps**: Prefer Git-driven deploys; avoid manual `kubectl apply` for app manifests.
+- **Image updates**: CI (ci-backend.yaml) updates the agent image tag in `gitops/apps/backend/deployment.yaml`; manual tag edits may be overwritten on next deploy.
+- **Terraform state**: Stored in S3 bucket `logicall-ai-terraform-state-<account-id>`.
+- **Secrets**: No hardcoded credentials; use GitHub variables/secrets and AWS Secrets Manager with External Secrets Operator.
 
 ## 🔒 Security Considerations
 
@@ -580,18 +626,17 @@ kubectl get secret livekit-credentials -n apps
 kubectl describe externalsecret livekit-credentials -n apps
 ```
 
-For detailed documentation, see [SECRET_MANAGEMENT.md](SECRET_MANAGEMENT.md).
+See the **Secret Management** section above; a separate `SECRET_MANAGEMENT.md` may exist in the repo.
 
 ## 📚 Additional Resources
 
+- [LiveKit Agents](https://docs.livekit.io/agents/) · [uv (Python)](https://docs.astral.sh/uv/)
 - [Terraform AWS EKS Module](https://registry.terraform.io/modules/terraform-aws-modules/eks/aws/)
-- [Argo CD Documentation](https://argo-cd.readthedocs.io/)
-- [LiveKit Agents Documentation](https://docs.livekit.io/agents/)
-- [External Secrets Operator](https://external-secrets.io/)
-- [AWS Secrets Manager](https://docs.aws.amazon.com/secretsmanager/)
-- [Kubernetes HPA Documentation](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/)
-- [Metrics Server](https://github.com/kubernetes-sigs/metrics-server)
+- [Argo CD](https://argo-cd.readthedocs.io/) · [External Secrets Operator](https://external-secrets.io/)
+- [AWS Secrets Manager](https://docs.aws.amazon.com/secretsmanager/) · [DynamoDB](https://docs.aws.amazon.com/dynamodb/)
+- [Kubernetes HPA](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/) · [Metrics Server](https://github.com/kubernetes-sigs/metrics-server)
 - [AWS EKS Best Practices](https://aws.github.io/aws-eks-best-practices/)
+- **In-repo:** [migrations/README.md](migrations/README.md) for DynamoDB profile setup
 
 ## 📄 License
 
