@@ -128,27 +128,11 @@ kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.pas
 kubectl get svc backend -n apps -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
 ```
 
-**Option 3: Use the helper script**
-```powershell
-powershell -ExecutionPolicy Bypass -File get-urls.ps1
-```
-
 ### 4. Set Up Secret Management (First Time Only)
 
 This project uses **External Secrets Operator** to automatically sync secrets from **AWS Secrets Manager** to Kubernetes.
 
-**Option A: Using the setup script (Recommended)**
-
-```powershell
-powershell -ExecutionPolicy Bypass -File setup-external-secrets.ps1
-```
-
-This script will:
-1. Create/update the secret in AWS Secrets Manager from your `.env.local` file
-2. Install External Secrets Operator (if not already installed)
-3. Configure IAM role annotations
-
-**Option B: Manual setup**
+**Manual setup**
 
 1. **Create secret in AWS Secrets Manager:**
    ```bash
@@ -244,8 +228,6 @@ See the **Secret Management** section below; a separate `SECRET_MANAGEMENT.md` m
 │   ├── deploy.yml                # EKS + Argo CD (manual dispatch)
 │   ├── ci-backend.yaml           # Build & deploy agent image to EKS
 │   └── deploy-api.yml            # Deploy API services (e.g. Lambda)
-│
-└── *.ps1                         # Helper scripts (see Helper Scripts)
 ```
 
 ## 🖥️ Local Development
@@ -345,40 +327,6 @@ After deployment, you'll have:
 
 - **Backend/API** (if a Service is configured): `http://<loadbalancer-dns>`  
   The LiveKit agent itself connects outbound to LiveKit Cloud and does not expose HTTP. The outbound trigger API is deployed as Lambda (see **Deploy API Services** workflow).
-
-## 🛠️ Helper Scripts
-
-### Windows PowerShell Scripts
-
-- `get-urls.ps1` - Get service URLs and credentials (Argo CD, backend)
-- `destroy-all.ps1` - Destroy Terraform-managed resources
-- `setup-external-secrets.ps1` - Configure External Secrets from `.env.local`
-- `create-livekit-secret.ps1` - Create/update LiveKit secret in AWS Secrets Manager
-- `test-docker.ps1` - Test agent Docker build/run
-- `test-agent.ps1` - Test agent locally
-- `check-costly-resources.ps1` - List resources that may incur cost
-- `cleanup-orphaned-resources.ps1` - Clean orphaned VPCs/resources
-- `cleanup-elastic-ips.ps1` - Release unassociated Elastic IPs
-- `cleanup-terraform-state.ps1` - Clean Terraform state
-- `cleanup-vpcs.ps1` - Clean up VPCs
-
-**Migrations:** `migrations/create_table.ps1`, `migrations/create_table_aws_cli.ps1`, `migrations/quick_setup.ps1`
-
-### Usage Examples
-
-```powershell
-# Get service URLs
-powershell -ExecutionPolicy Bypass -File get-urls.ps1
-
-# Destroy everything
-powershell -ExecutionPolicy Bypass -File destroy-all.ps1
-
-# Setup external secrets (from .env.local)
-powershell -ExecutionPolicy Bypass -File setup-external-secrets.ps1
-
-# Check costly resources
-powershell -ExecutionPolicy Bypass -File check-costly-resources.ps1
-```
 
 ## 🔧 Configuration
 
@@ -540,16 +488,7 @@ After pushing changes, Argo CD will automatically sync the updated HPA configura
 
 ### Destroy All Resources
 
-```powershell
-# Destroy Terraform-managed resources
-powershell -ExecutionPolicy Bypass -File destroy-all.ps1
-
-# Clean up orphaned resources
-powershell -ExecutionPolicy Bypass -File cleanup-orphaned-resources.ps1
-
-# Check for remaining costly resources
-powershell -ExecutionPolicy Bypass -File check-costly-resources.ps1
-```
+Use Terraform and/or AWS CLI to destroy EKS, VPCs, and related resources when you're done with the environment.
 
 ### Manual Cleanup
 
@@ -560,7 +499,7 @@ If Terraform destroy fails:
    aws eks delete-cluster --name logicall-ai-cluster --region us-east-1
    ```
 
-2. Wait for cluster deletion, then clean up VPCs using `cleanup-orphaned-resources.ps1`
+2. Wait for cluster deletion, then clean up any remaining VPCs and networking resources via the AWS Console or CLI.
 
 ## 📝 Notes
 
@@ -595,10 +534,7 @@ This project uses **External Secrets Operator** to automatically sync secrets fr
 
 ### Quick Setup
 
-```powershell
-# Run the setup script (reads from .env.local)
-powershell -ExecutionPolicy Bypass -File setup-external-secrets.ps1
-```
+You can optionally script secret creation/update locally, or just use the AWS CLI example below.
 
 ### Updating Secrets
 
