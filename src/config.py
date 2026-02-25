@@ -223,7 +223,7 @@ def get_default_profile() -> AgentProfileConfig:
         llm_preset_ref=PresetRef(id="gpt-5.1", version="1"),
         stt_preset_ref=PresetRef(id="nova-3", version="1"),
         tts_preset_ref=PresetRef(id="sonic-3", version="1"),
-        realtime_preset_ref=PresetRef(id="amazon.nova-2-sonic-v1:0", version="1"),
+        realtime_preset_ref=PresetRef(id="amazon-nova", version="1"),  # Amazon Nova realtime (Nova Sonic 2.0)
         tool_refs=["http:weather_geocode@1", "http:weather_current@1"],
         sip_outbound_trunk_id=None,
         limits=ProfileLimits(

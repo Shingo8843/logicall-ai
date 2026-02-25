@@ -288,14 +288,14 @@ def seed_tts_preset(dynamodb):
 
 
 def seed_realtime_preset(dynamodb):
-    """Seed default realtime preset (Amazon Nova Sonic)."""
-    print("Seeding default realtime preset...")
+    """Seed default realtime preset (Amazon Nova)."""
+    print("Seeding default realtime preset (Amazon Nova)...")
 
     item = {
         "pk": {"S": "PRESET#REALTIME"},
-        "sk": {"S": "ID#amazon.nova-2-sonic-v1:0#V#1"},
+        "sk": {"S": "ID#amazon-nova#V#1"},
         "entity_type": {"S": "preset"},
-        "preset_id": {"S": "amazon.nova-2-sonic-v1:0"},
+        "preset_id": {"S": "amazon-nova"},
         "version": {"S": "1"},
         "provider": {"S": "aws"},
         "model": {"S": "amazon.nova-2-sonic-v1:0"},
@@ -350,7 +350,7 @@ def seed_weather_http_tool(dynamodb):
                 {"S": "current"},
             ]
         },
-        "description": {"S": "Get current weather for coordinates via Open-Meteo."},
+        "description": {"S": "Get current weather for coordinates via Open-Meteo. Pass latitude and longitude; current conditions are requested automatically. Use seed_weather_geocode_http_tool first if you can not find coordinate"},
         "created_at": {"S": now},
         "updated_at": {"S": now},
     }

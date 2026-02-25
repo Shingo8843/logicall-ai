@@ -13,6 +13,9 @@ spec:
       labels:
         app: livekit-agent
     spec:
+      # Allow agent to drain: stop accepting new jobs and wait for active
+      # conversations to finish (up to drain_timeout, default 30m) before exit.
+      terminationGracePeriodSeconds: 600  # 10 min; increase if calls are longer
       containers:
         - name: agent
           image: 494777943750.dkr.ecr.us-east-1.amazonaws.com/backend:f89999a81e917ab58b0015e607d44b3b299ddf10

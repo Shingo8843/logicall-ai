@@ -20,7 +20,7 @@ def run_migration(migration_name: str) -> bool:
     migration_file = MIGRATIONS_DIR / f"{migration_name}.py"
     
     if not migration_file.exists():
-        print(f"✗ Migration file not found: {migration_file}")
+        print(f"[X] Migration file not found: {migration_file}")
         return False
     
     print(f"\n{'=' * 60}")
@@ -39,11 +39,11 @@ def run_migration(migration_name: str) -> bool:
             return module.run_migration()
         else:
             # Migration should run on import (if __name__ == "__main__")
-            print("⚠ Migration doesn't have run_migration() function")
+            print("[!] Migration doesn't have run_migration() function")
             return True
             
     except Exception as e:
-        print(f"✗ Error running migration {migration_name}: {e}")
+        print(f"[X] Error running migration {migration_name}: {e}")
         import traceback
         traceback.print_exc()
         return False
@@ -103,16 +103,16 @@ def main():
             all_success = all_success and success
             
             if not success:
-                print(f"\n✗ Migration {migration} failed. Stopping.")
+                print(f"\n[X] Migration {migration} failed. Stopping.")
                 break
         
         if all_success:
             print("\n" + "=" * 60)
-            print("✓ All migrations completed successfully!")
+            print("[OK] All migrations completed successfully!")
             print("=" * 60)
         else:
             print("\n" + "=" * 60)
-            print("✗ Some migrations failed!")
+            print("[X] Some migrations failed!")
             print("=" * 60)
         
         sys.exit(0 if all_success else 1)

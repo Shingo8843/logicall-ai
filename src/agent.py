@@ -22,6 +22,12 @@ from livekit.agents import (
     cli,
 )
 from livekit.plugins import silero
+
+# Register AWS plugin on main thread so realtime (Amazon Nova) works in job processes.
+# Must be imported at module load; lazy import in session_builder runs in a worker thread.
+import livekit.plugins.aws  # noqa: F401
+
+from .latency import log_latency
 from .profile_resolver import resolve_profile
 from .session_builder import build_session
 from .tools import DEFAULT_TELEPHONY_TOOL_IDS, resolve_tools
@@ -153,12 +159,83 @@ async def my_agent(ctx: JobContext):
         room=ctx.room,
         room_options=room_options,
     )
-    
+
+    # Latency: voice round-trip (user final transcript -> first agent speech)
+    voice_round_trip_state = {
+        "turn_start_time": None,
+        "samples_ms": [],  # collected for session-end average
+    }
+    room_name = ctx.room.name
+    job_id = ctx.job.id
+
+    @session.on("user_input_transcribed")
+    def _on_user_input_transcribed(event) -> None:
+        if getattr(event, "is_final", False):
+            voice_round_trip_state["turn_start_time"] = time.perf_counter()
+
+    # Minimum ms to log: in realtime mode, user_input_transcribed (final) can fire
+    # right before speech_created, giving bogus 3–4 ms; only report plausible round-trips.
+    VOICE_ROUND_TRIP_MIN_MS = 50.0
+
+    @session.on("speech_created")
+    def _on_speech_created(event) -> None:
+        t0 = voice_round_trip_state.get("turn_start_time")
+        if t0 is not None:
+            latency_ms = (time.perf_counter() - t0) * 1000
+            voice_round_trip_state["turn_start_time"] = None
+            if latency_ms >= VOICE_ROUND_TRIP_MIN_MS:
+                voice_round_trip_state["samples_ms"].append(latency_ms)
+                log_latency(
+                    "voice_round_trip",
+                    latency_ms,
+                    room=room_name,
+                    job_id=job_id,
+                    extra={"source": getattr(event, "source", "unknown")},
+                )
+
+    @session.on("close")
+    def _on_session_close(event) -> None:
+        samples = voice_round_trip_state.get("samples_ms") or []
+        if not samples:
+            return
+        n = len(samples)
+        avg_ms = sum(samples) / n
+        log_latency(
+            "voice_round_trip_session_avg",
+            avg_ms,
+            room=room_name,
+            job_id=job_id,
+            extra={
+                "count": n,
+                "min_ms": min(samples),
+                "max_ms": max(samples),
+            },
+        )
+
+    @session.on("metrics_collected")
+    def _on_metrics_collected(event) -> None:
+        metrics = getattr(event, "metrics", None)
+        if metrics is None:
+            return
+        # Log LLM/TTS/STT metrics if they expose latency or token counts
+        name = type(metrics).__name__
+        extra = {"room": room_name, "job_id": job_id}
+        if hasattr(metrics, "input_tokens"):
+            extra["input_tokens"] = metrics.input_tokens
+        if hasattr(metrics, "output_tokens"):
+            extra["output_tokens"] = metrics.output_tokens
+        if hasattr(metrics, "latency_ms"):
+            log_latency(f"llm_{name}", metrics.latency_ms, room=room_name, job_id=job_id, extra=extra)
+        elif hasattr(metrics, "duration_ms"):
+            log_latency(f"inference_{name}", metrics.duration_ms, room=room_name, job_id=job_id, extra=extra)
+        elif extra.get("input_tokens") is not None or extra.get("output_tokens") is not None:
+            logger.debug("metrics_collected %s", name, extra={"extra": extra})
+
     logger.info(
         f"Agent session started: profile={profile.profile_id}, "
         f"mode={profile.mode}, language={profile.language}"
     )
-    
+
     # Step 7: Connect to room
     await ctx.connect()
 

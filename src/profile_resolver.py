@@ -301,7 +301,7 @@ def _build_profile_config(profile_data: dict[str, Any]) -> AgentProfileConfig:
     tts_ref = _parse_preset_ref(profile_data.get("tts_preset_ref"), "sonic-3")
     realtime_ref = _parse_preset_ref(
         profile_data.get("realtime_preset_ref"),
-        "amazon.nova-2-sonic-v1:0",
+        "amazon-nova",
     )
     
     # Build limits

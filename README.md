@@ -234,11 +234,13 @@ See the **Secret Management** section below; a separate `SECRET_MANAGEMENT.md` m
 
 ### Agent (LiveKit)
 
-- **With Docker:**  
+- **With Docker:**
   `docker-compose up` runs the agent in **dev** mode (connects to LiveKit Cloud). Ensure `.env.local` exists with `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, and any TTS/STT keys (OpenAI, Anthropic, etc.).
 
-- **With uv:**  
+- **With uv:**
   From repo root: `uv sync` then `uv run -m src.agent dev`.
+
+- **Playground / dispatch:** The worker registers as `agent_name="logicall-agent"` (explicit dispatch). So from **LiveKit Playground** you must request this agent: when creating or joining the room, set the **agent name** (or “Request agent”) to `logicall-agent`. Otherwise Cloud won’t send the job to this worker. Outbound calls via the API use `create_dispatch(agent_name="logicall-agent")` and will match this worker.
 
 ### Outbound trigger API
 
@@ -416,6 +418,18 @@ Edit `gitops/apps/backend/hpa.yaml` to change:
 After pushing changes, Argo CD will automatically sync the updated HPA configuration.
 
 ## 🐛 Troubleshooting
+
+### Agent not dispatched from LiveKit Playground
+
+The worker registers with **agent name** `logicall-agent` (explicit dispatch). LiveKit Cloud only sends jobs to it when the room or token requests that agent.
+
+- **In the Playground:** When you create or join a room, set the **agent name** (or “Request agent” / “Agent”) to **`logicall-agent`**. If it’s empty or something else, the job goes to other workers or nowhere.
+- **In LiveKit Cloud:** In the project’s **Agents** (or **Agent Dispatch**) section, confirm the agent is enabled and that the requested agent name matches `logicall-agent` when testing from the Playground.
+- **Logs:** With `uv run -m src.agent dev` you should see `registered worker` and then `received job request` when a job is dispatched. If you never see `received job request`, dispatch isn’t matching (wrong agent name or worker not connected).
+
+### `RuntimeError: aclose(): asynchronous generator is already running`
+
+This can appear in the logs when a realtime voice session ends (user disconnects). It comes from the livekit-agents library’s realtime teardown, not from your code. The session still closes; the error is a known async-generator cleanup bug ([livekit/agents#2333](https://github.com/livekit/agents/issues/2333)). Use livekit-agents and livekit-plugins-aws **1.4.x** (see `pyproject.toml`) for the latest stability fixes; if it persists, it’s safe to ignore or watch the [agents repo](https://github.com/livekit/agents) for fixes.
 
 ### HPA Not Scaling
 

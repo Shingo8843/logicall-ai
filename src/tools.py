@@ -16,6 +16,8 @@ from botocore.exceptions import ClientError
 from livekit import api
 from livekit.agents import FunctionTool, RunContext, function_tool, get_job_context
 
+from .latency import timed_async_tool
+
 logger = logging.getLogger("agent_tools")
 
 # Default tool pack enabled for telephony-first agents.
@@ -80,17 +82,17 @@ async def _send_dtmf(ctx: RunContext, digits: str) -> str:
 def _build_builtin_registry() -> dict[str, FunctionTool]:
     return {
         "hang_up": function_tool(
-            _hang_up,
+            timed_async_tool("hang_up", _hang_up),
             name="hang_up",
             description="End the active call/session gracefully.",
         ),
         "wait": function_tool(
-            _wait,
+            timed_async_tool("wait", _wait),
             name="wait",
             description="Pause for a short number of seconds while waiting for backend state.",
         ),
         "send_dtmf": function_tool(
-            _send_dtmf,
+            timed_async_tool("send_dtmf", _send_dtmf),
             name="send_dtmf",
             description="Send DTMF digits like 1, 2, # for IVR navigation.",
         ),
@@ -320,6 +322,13 @@ def _make_http_tool(defn: HttpToolDefinition) -> FunctionTool:
         # Compatibility alias often produced by LLMs for Open-Meteo.
         if "current_weather" in query and "current" not in query:
             query["current"] = query.pop("current_weather")
+        # Open-Meteo forecast API returns current only when requested; default so we get conditions.
+        if (
+            defn.tool_id == "weather_current"
+            and "current" not in query
+            and "api.open-meteo.com" in defn.base_url
+        ):
+            query["current"] = "temperature_2m,relative_humidity_2m,weather_code"
 
         if defn.allowed_query_keys:
             disallowed = [k for k in query if k not in defn.allowed_query_keys]
@@ -382,7 +391,7 @@ def _make_http_tool(defn: HttpToolDefinition) -> FunctionTool:
         return f"HTTP {status_code}: {response_body}"
 
     return function_tool(
-        _http_tool,
+        timed_async_tool(f"http_{defn.tool_id}", _http_tool),
         name=f"http_{defn.tool_id}",
         description=defn.description,
     )

@@ -96,7 +96,7 @@ def verify_presets():
         ("LLM", "ID#gpt-5.1#V#1"),
         ("STT", "ID#nova-3#V#1"),
         ("TTS", "ID#sonic-3#V#1"),
-        ("REALTIME", "ID#amazon.nova-2-sonic-v1:0#V#1"),
+        ("REALTIME", "ID#amazon-nova#V#1"),
     ]
     
     all_found = True
