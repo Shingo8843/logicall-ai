@@ -19,6 +19,18 @@ router = APIRouter()
 class TriggerRequest(BaseModel):
     phone_number: str = Field(..., pattern=r"^\+\d{7,15}$", description="E.164 phone number")
     agent_name: str = Field(default="logicall-agent", description="Agent name to dispatch")
+    profile_id: str | None = Field(
+        default=None,
+        description="Optional AgentProfile ID to use for this call",
+    )
+    profile_version: str | None = Field(
+        default=None,
+        description="Optional AgentProfile version; defaults to latest if omitted",
+    )
+    prompt_vars: dict | None = Field(
+        default=None,
+        description="Variables to substitute in the profile prompt, e.g. {'logistics_company': 'Acme', 'agent_name': 'Alex', 'tracking_number': '123'}",
+    )
     metadata: dict | None = Field(default=None, description="Extra metadata for the dispatch")
 
 
@@ -40,6 +52,16 @@ async def trigger_outbound_call(req: TriggerRequest):
         raise HTTPException(status_code=500, detail="Failed to retrieve LiveKit credentials")
 
     dispatch_meta = {"phone_number": req.phone_number}
+
+    # Allow caller to select a specific AgentProfile.
+    # The LiveKit agent worker reads `profile_id` and `profile_version`
+    # from room/job metadata and resolves the configuration from DynamoDB.
+    if req.profile_id is not None:
+        dispatch_meta["profile_id"] = req.profile_id
+    if req.profile_version is not None:
+        dispatch_meta["profile_version"] = req.profile_version
+    if req.prompt_vars:
+        dispatch_meta["prompt_vars"] = {k: str(v) for k, v in req.prompt_vars.items()}
     if req.metadata:
         dispatch_meta.update(req.metadata)
 

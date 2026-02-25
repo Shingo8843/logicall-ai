@@ -6,6 +6,7 @@ This folder contains migrations for setting up and managing the DynamoDB table f
 
 - `001_create_table.py` - Creates the DynamoDB table
 - `002_seed_defaults.py` - Seeds default profile and presets
+- `003_seed_logistics_profiles.py` - Seeds logistics agent profiles (carrier-checkup, delivery-reschedule, etc.) from `prompts/`
 - `run_migrations.py` - Migration runner script
 
 ## Usage
@@ -27,6 +28,8 @@ python migrations/run_migrations.py
 ```bash
 python migrations/001_create_table.py
 python migrations/002_seed_defaults.py
+python migrations/003_seed_logistics_profiles.py
+# Or: uv run python migrations/003_seed_logistics_profiles.py
 ```
 
 ### Using AWS CLI

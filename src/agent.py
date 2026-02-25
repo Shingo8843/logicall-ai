@@ -36,6 +36,25 @@ logger = logging.getLogger("agent")
 
 load_dotenv(".env.local")
 
+# Metadata keys used for dispatch/routing; not used as prompt template variables.
+_RESERVED_META_KEYS = frozenset({"profile_id", "profile_version", "phone_number"})
+
+
+def _apply_prompt_vars(template: str, variables: dict) -> str:
+    """
+    Replace {{key}} placeholders in template with values from variables.
+    Values are coerced to str. Missing keys are left as {{key}}.
+    """
+    if not variables:
+        return template
+    result = template
+    for key, value in variables.items():
+        if key in _RESERVED_META_KEYS:
+            continue
+        placeholder = "{{" + key + "}}"
+        result = result.replace(placeholder, str(value))
+    return result
+
 
 class ConfigurableAgent(Agent):
     """
@@ -84,10 +103,11 @@ async def my_agent(ctx: JobContext):
         "job_id": ctx.job.id,
     }
     
-    # Step 1: Resolve profile_id and outbound dial info from metadata
+    # Step 1: Resolve profile_id, outbound dial info, and prompt_vars from metadata
     profile_id = None
     profile_version = None
     phone_number = None
+    merged_meta: dict = {}
 
     for raw_meta in (ctx.job.metadata, ctx.room.metadata):
         if not raw_meta:
@@ -96,12 +116,14 @@ async def my_agent(ctx: JobContext):
             meta = json.loads(raw_meta) if isinstance(raw_meta, str) else raw_meta
         except (json.JSONDecodeError, AttributeError):
             continue
+        if isinstance(meta, dict):
+            merged_meta.update(meta)
         if profile_id is None:
-            profile_id = meta.get("profile_id")
+            profile_id = meta.get("profile_id") if isinstance(meta, dict) else None
         if profile_version is None:
-            profile_version = meta.get("profile_version")
+            profile_version = meta.get("profile_version") if isinstance(meta, dict) else None
         if phone_number is None:
-            phone_number = meta.get("phone_number")
+            phone_number = meta.get("phone_number") if isinstance(meta, dict) else None
     
     # Step 2: Resolve profile configuration
     # TODO: Extract tenant_id from context (room, job, or environment)
@@ -147,9 +169,17 @@ async def my_agent(ctx: JobContext):
         logger.error(f"Failed to build session: {e}", exc_info=True)
         raise
     
-    # Step 5: Create agent with profile instructions
+    # Step 5: Create agent with profile instructions (with optional runtime prompt vars)
+    # prompt_vars from dispatch/room metadata (e.g. logistics_company, agent_name, tracking_number)
+    # are substituted into the profile's system_prompt so each call can be personalized.
+    prompt_vars = merged_meta.get("prompt_vars")
+    if isinstance(prompt_vars, dict):
+        system_prompt = _apply_prompt_vars(profile.system_prompt, prompt_vars)
+    else:
+        system_prompt = profile.system_prompt
+
     agent = ConfigurableAgent(
-        system_prompt=profile.system_prompt,
+        system_prompt=system_prompt,
         tools=tools,
     )
     
