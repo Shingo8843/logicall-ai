@@ -1,11 +1,15 @@
-"""Route for triggering outbound calls via LiveKit agent dispatch."""
+"""Route for triggering outbound calls via LiveKit agent dispatch.
+
+Lambda creates the SIP participant (dials) and then dispatches the agent.
+The agent joins the room and greets; it does not perform outbound dialing.
+"""
 
 import json
 import logging
 import random
 import string
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from api.common.secrets import get_livekit_credentials
@@ -33,7 +37,7 @@ class TriggerRequest(BaseModel):
     )
     sip_outbound_trunk_id: str | None = Field(
         default=None,
-        description="LiveKit SIP trunk ID for outbound calls. Required for outbound unless set on the profile in DynamoDB.",
+        description="LiveKit SIP trunk ID for outbound calls. Required for outbound.",
     )
     metadata: dict | None = Field(default=None, description="Extra metadata for the dispatch")
 
@@ -50,10 +54,16 @@ def _random_room_name() -> str:
 
 
 @router.post("/trigger", response_model=TriggerResponse)
-async def trigger_outbound_call(req: TriggerRequest):
+async def trigger_outbound_call(req: TriggerRequest, request: Request | None = None):
     creds = get_livekit_credentials()
     if not creds:
         raise HTTPException(status_code=500, detail="Failed to retrieve LiveKit credentials")
+
+    if not req.sip_outbound_trunk_id:
+        raise HTTPException(
+            status_code=400,
+            detail="sip_outbound_trunk_id is required for outbound calls",
+        )
 
     dispatch_meta = {"phone_number": req.phone_number}
 
@@ -66,16 +76,35 @@ async def trigger_outbound_call(req: TriggerRequest):
         dispatch_meta["profile_version"] = req.profile_version
     if req.prompt_vars:
         dispatch_meta["prompt_vars"] = {k: str(v) for k, v in req.prompt_vars.items()}
-    if req.sip_outbound_trunk_id:
-        dispatch_meta["sip_outbound_trunk_id"] = req.sip_outbound_trunk_id
+    dispatch_meta["sip_outbound_trunk_id"] = req.sip_outbound_trunk_id
     if req.metadata:
         dispatch_meta.update(req.metadata)
+
+    # Optional idempotency: store request id in metadata for duplicate detection on retries.
+    if request is not None:
+        req_id = getattr(request.state, "request_id", None) or request.headers.get("x-request-id")
+        if req_id:
+            dispatch_meta["idempotency_key"] = req_id
 
     room_name = _random_room_name()
 
     lk = create_livekit_api(creds)
     try:
-        from livekit.api import CreateAgentDispatchRequest
+        from livekit.api import CreateAgentDispatchRequest, CreateSIPParticipantRequest
+
+        # Create SIP participant (dial) into the room first; then dispatch the agent.
+        await lk.sip.create_sip_participant(
+            CreateSIPParticipantRequest(
+                room_name=room_name,
+                sip_trunk_id=req.sip_outbound_trunk_id,
+                sip_call_to=req.phone_number,
+                participant_identity=req.phone_number,
+                participant_name=f"Call to {req.phone_number}",
+                krisp_enabled=True,
+                wait_until_answered=True,
+            )
+        )
+        logger.info("SIP participant created for outbound call: room=%s phone=%s", room_name, req.phone_number)
 
         await lk.agent_dispatch.create_dispatch(
             CreateAgentDispatchRequest(
@@ -85,8 +114,8 @@ async def trigger_outbound_call(req: TriggerRequest):
             )
         )
     except Exception as e:
-        logger.exception("Failed to dispatch agent")
-        raise HTTPException(status_code=500, detail=f"Dispatch failed: {e}")
+        logger.exception("Outbound trigger failed")
+        raise HTTPException(status_code=500, detail=f"Outbound trigger failed: {e}")
     finally:
         await lk.aclose()
 

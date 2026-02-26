@@ -1,4 +1,4 @@
-"""Reusable built-in and profile-scoped HTTP tools for voice agents."""
+"""DynamoDB-backed HTTP tool definitions for tenant-configured API calls."""
 
 import asyncio
 import json
@@ -7,96 +7,18 @@ import os
 import re
 import urllib.parse
 import urllib.request
-from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
 import boto3
 from botocore.exceptions import ClientError
-from livekit import api
-from livekit.agents import FunctionTool, RunContext, function_tool, get_job_context
+from livekit.agents import FunctionTool, function_tool
 
-from .latency import timed_async_tool
+from ..latency import timed_async_tool
 
 logger = logging.getLogger("agent_tools")
 
-# Default tool pack enabled for telephony-first agents.
-DEFAULT_TELEPHONY_TOOL_IDS = {"hang_up", "wait", "send_dtmf"}
 HTTP_REF_PREFIX = "http:"
-
-
-async def _hang_up(ctx: RunContext, reason: str = "Call completed") -> str:
-    """End the active call/session."""
-    logger.info("hang_up requested: %s", reason)
-
-    job_ctx = get_job_context()
-    if job_ctx is not None:
-        try:
-            await job_ctx.api.room.delete_room(
-                api.DeleteRoomRequest(room=job_ctx.room.name)
-            )
-            logger.info("Room %s deleted, SIP participant disconnected", job_ctx.room.name)
-        except Exception as e:
-            logger.error("Failed to delete room for hang_up: %s", e)
-            ctx.session.shutdown(drain=True)
-    else:
-        ctx.session.shutdown(drain=True)
-
-    return f"Ending the call now. Reason: {reason}"
-
-
-async def _wait(seconds: int = 2) -> str:
-    """Intentionally pause while backend operations complete."""
-    clamped = max(0, min(int(seconds), 30))
-    logger.info("wait requested: %ss", clamped)
-    if clamped > 0:
-        await asyncio.sleep(clamped)
-    return f"Waited {clamped} second(s)"
-
-
-async def _send_dtmf(ctx: RunContext, digits: str) -> str:
-    """Send DTMF digits for IVR navigation."""
-    normalized = (digits or "").strip().upper()
-    if not normalized or not re.fullmatch(r"[0-9A-D*#]+", normalized):
-        return "Invalid DTMF digits. Use only 0-9, A-D, *, #"
-
-    try:
-        participant = ctx.session.room_io.room.local_participant
-    except Exception:
-        logger.warning("send_dtmf unavailable: room/local participant not ready")
-        return "DTMF not available in the current session context"
-
-    for method_name in ("send_dtmf", "publish_dtmf", "dial_dtmf"):
-        method = getattr(participant, method_name, None)
-        if callable(method):
-            result = method(normalized)
-            if asyncio.iscoroutine(result):
-                await result
-            logger.info("DTMF sent via %s: %s", method_name, normalized)
-            return f"Sent DTMF: {normalized}"
-
-    logger.warning("DTMF is not supported by this participant transport")
-    return "DTMF is not supported in this transport/session"
-
-
-def _build_builtin_registry() -> dict[str, FunctionTool]:
-    return {
-        "hang_up": function_tool(
-            timed_async_tool("hang_up", _hang_up),
-            name="hang_up",
-            description="End the active call/session gracefully.",
-        ),
-        "wait": function_tool(
-            timed_async_tool("wait", _wait),
-            name="wait",
-            description="Pause for a short number of seconds while waiting for backend state.",
-        ),
-        "send_dtmf": function_tool(
-            timed_async_tool("send_dtmf", _send_dtmf),
-            name="send_dtmf",
-            description="Send DTMF digits like 1, 2, # for IVR navigation.",
-        ),
-    }
 
 
 @dataclass
@@ -121,7 +43,7 @@ class HttpToolDefinition:
     description: str
 
 
-def _parse_http_tool_ref(tool_ref: str) -> HttpToolRef | None:
+def parse_http_tool_ref(tool_ref: str) -> HttpToolRef | None:
     """
     Parse HTTP tool reference in one of these forms:
     - http:<tool_id>
@@ -192,7 +114,6 @@ def _validate_http_tool_definition(raw: dict[str, Any]) -> HttpToolDefinition | 
     base_url = str(raw.get("base_url", "")).strip()
     path_template = str(raw.get("path_template", "/")).strip() or "/"
 
-    # Security: HTTPS only, fixed host/path template.
     if not base_url.startswith("https://"):
         logger.warning("HTTPTOOL rejected: base_url must be HTTPS (%s)", base_url)
         return None
@@ -246,7 +167,7 @@ def _render_path(path_template: str, path_params: dict[str, str] | None) -> str:
     return rendered
 
 
-def _make_http_tool(defn: HttpToolDefinition) -> FunctionTool:
+def make_http_tool(defn: HttpToolDefinition) -> FunctionTool:
     def _parse_object_arg(
         raw: Any,
         *,
@@ -266,7 +187,6 @@ def _make_http_tool(defn: HttpToolDefinition) -> FunctionTool:
         if not text:
             return {}, None
 
-        # Support URL query-string style for better LLM robustness.
         if allow_querystring and "=" in text and not text.startswith("{"):
             pairs = urllib.parse.parse_qsl(text, keep_blank_values=True)
             return {k: v for k, v in pairs}, None
@@ -288,15 +208,6 @@ def _make_http_tool(defn: HttpToolDefinition) -> FunctionTool:
         body_json: str = "",
         headers_json: str = "{}",
     ) -> str:
-        """
-        Call the configured HTTP endpoint.
-
-        JSON arguments must decode to objects:
-        - path_params_json: path template replacements
-        - query_json: query parameters
-        - body_json: request body object (or empty string for no body)
-        - headers_json: dynamic headers (filtered by allowlist)
-        """
         path_params, err = _parse_object_arg(path_params_json, arg_name="path_params_json")
         if err:
             return err
@@ -319,10 +230,8 @@ def _make_http_tool(defn: HttpToolDefinition) -> FunctionTool:
         except ValueError as err:
             return str(err)
 
-        # Compatibility alias often produced by LLMs for Open-Meteo.
         if "current_weather" in query and "current" not in query:
             query["current"] = query.pop("current_weather")
-        # Open-Meteo forecast API returns current only when requested; default so we get conditions.
         if (
             defn.tool_id == "weather_current"
             and "current" not in query
@@ -397,7 +306,7 @@ def _make_http_tool(defn: HttpToolDefinition) -> FunctionTool:
     )
 
 
-async def _fetch_http_tool_definition(
+async def fetch_http_tool_definition(
     ref: HttpToolRef,
     *,
     table_name: str,
@@ -430,40 +339,3 @@ async def _fetch_http_tool_definition(
     parsed.setdefault("http_tool_id", ref.tool_id)
     parsed.setdefault("version", ref.version)
     return _validate_http_tool_definition(parsed)
-
-
-async def resolve_tools(tool_ids: Iterable[str]) -> list[FunctionTool]:
-    """
-    Build a strict tool list for an agent.
-
-    Only tool IDs in `tool_ids` are returned. This supports:
-    - Built-ins: `hang_up`, `wait`, `send_dtmf`
-    - Profile-scoped HTTP tools: `http:<tool_id>@<version>`
-    """
-    table_name = os.getenv("DYNAMODB_TABLE_NAME", "logicall_agent_config")
-    region = os.getenv("AWS_REGION", "us-east-1")
-    builtin_registry = _build_builtin_registry()
-
-    selected: list[FunctionTool] = []
-    for tool_id in tool_ids:
-        builtin = builtin_registry.get(tool_id)
-        if builtin is not None:
-            selected.append(builtin)
-            continue
-
-        http_ref = _parse_http_tool_ref(tool_id)
-        if http_ref is not None:
-            http_def = await _fetch_http_tool_definition(
-                http_ref,
-                table_name=table_name,
-                region=region,
-            )
-            if http_def is None:
-                continue
-            selected.append(_make_http_tool(http_def))
-            continue
-
-        logger.warning("Unknown tool_id requested, skipping: %s", tool_id)
-
-    return selected
-
