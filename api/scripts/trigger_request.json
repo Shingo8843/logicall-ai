@@ -1,0 +1,12 @@
+{
+  "phone_number": "+13103476082",
+  "profile_id": "carrier-checkup",
+  "prompt_vars": {
+    "logistics_company": "Northgate Logistics",
+    "agent_name": "Sam",
+    "carrier_brand": "Pacific Express",
+    "tracking_number": "1Z999AA10123456784",
+    "recipient_name": "Maria",
+    "address": "450 Main St, Suite 200"
+  }
+}
