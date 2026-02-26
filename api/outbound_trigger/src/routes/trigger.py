@@ -54,7 +54,7 @@ def _random_room_name() -> str:
 
 
 @router.post("/trigger", response_model=TriggerResponse)
-async def trigger_outbound_call(req: TriggerRequest, request: Request | None = None):
+async def trigger_outbound_call(req: TriggerRequest, request: Request):
     creds = get_livekit_credentials()
     if not creds:
         raise HTTPException(status_code=500, detail="Failed to retrieve LiveKit credentials")
@@ -81,10 +81,9 @@ async def trigger_outbound_call(req: TriggerRequest, request: Request | None = N
         dispatch_meta.update(req.metadata)
 
     # Optional idempotency: store request id in metadata for duplicate detection on retries.
-    if request is not None:
-        req_id = getattr(request.state, "request_id", None) or request.headers.get("x-request-id")
-        if req_id:
-            dispatch_meta["idempotency_key"] = req_id
+    req_id = getattr(request.state, "request_id", None) or request.headers.get("x-request-id")
+    if req_id:
+        dispatch_meta["idempotency_key"] = req_id
 
     room_name = _random_room_name()
 
