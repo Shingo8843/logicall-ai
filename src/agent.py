@@ -271,9 +271,13 @@ async def my_agent(ctx: JobContext):
 
     # Step 8: Outbound dial or inbound greeting
     if phone_number:
-        sip_trunk_id = profile.sip_outbound_trunk_id
+        # Trunk ID can come from dispatch metadata (e.g. Lambda trigger) or from profile
+        sip_trunk_id = merged_meta.get("sip_outbound_trunk_id") or profile.sip_outbound_trunk_id
         if not sip_trunk_id:
-            logger.error("Outbound call requested but no sip_outbound_trunk_id in profile")
+            logger.error(
+                "Outbound call requested but no sip_outbound_trunk_id. "
+                "Pass it in the trigger request (sip_outbound_trunk_id) or set it on the profile in DynamoDB."
+            )
             ctx.shutdown()
             return
 

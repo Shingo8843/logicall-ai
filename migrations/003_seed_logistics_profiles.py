@@ -105,6 +105,11 @@ def seed_profile(dynamodb, profile_id: str, system_prompt: str) -> bool:
     # No tool refs for these voice-only logistics profiles
     # item["tool_refs"] omitted -> profile_resolver treats as []
 
+    # SIP outbound trunk for phone calls (env override optional)
+    sip_trunk = os.getenv("SIP_OUTBOUND_TRUNK_ID", "ST_wCPfwPCXu7HV")
+    if sip_trunk:
+        item["sip_outbound_trunk_id"] = {"S": sip_trunk}
+
     # Session behavior (same defaults as default profile)
     behavior_dict = {
         "allow_interruptions": True,

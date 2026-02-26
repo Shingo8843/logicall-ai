@@ -7,6 +7,7 @@ This folder contains migrations for setting up and managing the DynamoDB table f
 - `001_create_table.py` - Creates the DynamoDB table
 - `002_seed_defaults.py` - Seeds default profile and presets
 - `003_seed_logistics_profiles.py` - Seeds logistics agent profiles (carrier-checkup, delivery-reschedule, etc.) from `prompts/`
+- `004_add_sip_trunk_to_profiles.py` - Adds sip_outbound_trunk_id to all profiles (default + logistics)
 - `run_migrations.py` - Migration runner script
 
 ## Usage

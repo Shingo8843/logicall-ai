@@ -31,6 +31,10 @@ class TriggerRequest(BaseModel):
         default=None,
         description="Variables to substitute in the profile prompt, e.g. {'logistics_company': 'Acme', 'agent_name': 'Alex', 'tracking_number': '123'}",
     )
+    sip_outbound_trunk_id: str | None = Field(
+        default=None,
+        description="LiveKit SIP trunk ID for outbound calls. Required for outbound unless set on the profile in DynamoDB.",
+    )
     metadata: dict | None = Field(default=None, description="Extra metadata for the dispatch")
 
 
@@ -62,6 +66,8 @@ async def trigger_outbound_call(req: TriggerRequest):
         dispatch_meta["profile_version"] = req.profile_version
     if req.prompt_vars:
         dispatch_meta["prompt_vars"] = {k: str(v) for k, v in req.prompt_vars.items()}
+    if req.sip_outbound_trunk_id:
+        dispatch_meta["sip_outbound_trunk_id"] = req.sip_outbound_trunk_id
     if req.metadata:
         dispatch_meta.update(req.metadata)
 
