@@ -21,3 +21,4 @@ Thumbs.db
 *.pyc
 *.sh
 /src/logicall_ai.egg-info
+*.env
