@@ -11,6 +11,11 @@ import time
 from collections import deque
 
 from .latency import log_latency
+from .metrics_server import (
+    record_inference_duration_ms,
+    record_voice_round_trip_latency_ms,
+    record_voice_round_trip_session_avg_ms,
+)
 
 logger = logging.getLogger("agent.session_hooks")
 
@@ -18,6 +23,7 @@ VOICE_ROUND_TRIP_MIN_MS = 50.0
 
 
 def attach_session_hooks(session, profile, room_name: str, job_id: str, ctx):
+    profile_id = getattr(profile, "profile_id", "default") or "default"
     """
     Attach latency listeners, metrics logging, and profile limits to the session.
 
@@ -55,6 +61,7 @@ def attach_session_hooks(session, profile, room_name: str, job_id: str, ctx):
                     job_id=job_id,
                     extra={"source": getattr(event, "source", "unknown")},
                 )
+                record_voice_round_trip_latency_ms(latency_ms, profile_id=profile_id)
 
     @session.on("close")
     def _on_session_close(event) -> None:
@@ -74,6 +81,7 @@ def attach_session_hooks(session, profile, room_name: str, job_id: str, ctx):
                 "max_ms": max(samples),
             },
         )
+        record_voice_round_trip_session_avg_ms(avg_ms, profile_id=profile_id)
 
     @session.on("metrics_collected")
     def _on_metrics_collected(event) -> None:
@@ -88,8 +96,10 @@ def attach_session_hooks(session, profile, room_name: str, job_id: str, ctx):
             extra["output_tokens"] = metrics.output_tokens
         if hasattr(metrics, "latency_ms"):
             log_latency(f"llm_{name}", metrics.latency_ms, room=room_name, job_id=job_id, extra=extra)
+            record_inference_duration_ms(metrics.latency_ms, profile_id=profile_id)
         elif hasattr(metrics, "duration_ms"):
             log_latency(f"inference_{name}", metrics.duration_ms, room=room_name, job_id=job_id, extra=extra)
+            record_inference_duration_ms(metrics.duration_ms, profile_id=profile_id)
         elif extra.get("input_tokens") is not None or extra.get("output_tokens") is not None:
             logger.debug("metrics_collected %s", name, extra={"extra": extra})
 

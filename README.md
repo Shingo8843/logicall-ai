@@ -252,7 +252,8 @@ python api/run_local.py outbound_trigger
 # Optional: --port 9000 --host 127.0.0.1
 ```
 
-Docs at `http://127.0.0.1:8010/docs`.
+- **Interactive docs:** http://127.0.0.1:8010/docs  
+- **Request format guide:** [api/outbound_trigger/README.md](api/outbound_trigger/README.md) — field reference, examples, `prompt_vars`, and available profiles
 
 ### DynamoDB (profiles)
 
@@ -263,6 +264,11 @@ python migrations/run_migrations.py
 ```
 
 Set `DYNAMODB_TABLE_NAME` (default `logicall_agent_config`) and `AWS_REGION` in `.env.local` or environment.
+
+### Observability (Grafana Cloud)
+
+- **Egress + /metrics:** [docs/EGRESS_AND_METRICS.md](docs/EGRESS_AND_METRICS.md) — enable LiveKit Egress (record room audio to S3) and Prometheus **/metrics** for Grafana Cloud scrape.
+- **OTLP (traces, logs):** [docs/GRAFANA_CLOUD.md](docs/GRAFANA_CLOUD.md) — send traces/logs to Grafana Cloud via OTLP and optional Alloy.
 
 ## 🔄 Deployment Flow
 
@@ -586,7 +592,7 @@ See the **Secret Management** section above; a separate `SECRET_MANAGEMENT.md` m
 - [AWS Secrets Manager](https://docs.aws.amazon.com/secretsmanager/) · [DynamoDB](https://docs.aws.amazon.com/dynamodb/)
 - [Kubernetes HPA](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/) · [Metrics Server](https://github.com/kubernetes-sigs/metrics-server)
 - [AWS EKS Best Practices](https://aws.github.io/aws-eks-best-practices/)
-- **In-repo:** [migrations/README.md](migrations/README.md) for DynamoDB profile setup
+- **In-repo:** [migrations/README.md](migrations/README.md) for DynamoDB profile setup · [docs/EGRESS_AND_METRICS.md](docs/EGRESS_AND_METRICS.md) for Egress + /metrics · [docs/GRAFANA_CLOUD.md](docs/GRAFANA_CLOUD.md) for Grafana Cloud (OTLP) integration
 
 ## 📄 License
 

@@ -80,6 +80,9 @@ async def resolve_profile(
         if profile_version is None:
             logger.warning(f"No version found for profile {profile_id}, using defaults")
             return get_default_profile()
+    # Normalize version: DynamoDB stores "1", accept "v1" from metadata
+    if profile_version.startswith("v") and len(profile_version) > 1:
+        profile_version = profile_version[1:]
     
     # Step 3: Fetch profile from DynamoDB
     profile_data = await _fetch_profile(tenant_id, profile_id, profile_version)
@@ -386,7 +389,7 @@ def _build_profile_config(profile_data: dict[str, Any]) -> AgentProfileConfig:
         audio_output_data = room_data["audio_output"]
         audio_output = AudioOutputOptions(
             sample_rate=audio_output_data.get("sample_rate", 24000),
-            num_channels=audio_output_data.get("num_channels", 1),
+            num_channels=audio_output_data.get("num_channels", 2),  # stereo default
             track_name=audio_output_data.get("track_name"),
         )
     elif room_data.get("audio_output") is False:
