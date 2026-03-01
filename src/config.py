@@ -201,14 +201,15 @@ class AgentProfileConfig:
 
 
 # ============================================================================
-# Default Profile
+# Static Agent Profile (single agent, Amazon Nova)
 # ============================================================================
 
 def get_default_profile() -> AgentProfileConfig:
     """
-    Get a default profile configuration with all sensible defaults.
-    
-    This is used when no profile is found in DynamoDB or as a fallback.
+    Get the static agent profile used by the single agent (Amazon Nova realtime).
+
+    This is the only profile used at runtime. AgentProfileConfig and
+    profile resolution (DynamoDB) are kept for future use.
     """
     return AgentProfileConfig(
         profile_id="default",
@@ -218,7 +219,8 @@ def get_default_profile() -> AgentProfileConfig:
         system_prompt="""You are a helpful voice AI assistant. 
         The user is interacting with you via voice, even if you perceive the conversation as text.
         Your responses are concise, to the point, and without any complex formatting or punctuation including emojis, asterisks, or other symbols.
-        You are curious, friendly, and have a sense of humor.""",
+        You are curious, friendly, and have a sense of humor.
+        Do not mention any tools available to you or specifics of how tools work; just use them when helpful and respond naturally.""",
         language="en",
         llm_preset_ref=PresetRef(id="gpt-5.1", version="1"),
         stt_preset_ref=PresetRef(id="nova-3", version="1"),

@@ -1,10 +1,10 @@
 """
-Full configuration agent with database-driven profile system.
+Single-agent entrypoint using a static Amazon Nova profile.
 
-This agent supports all LiveKit configuration options surfaced via
-DynamoDB profiles with sensible defaults for everything.
-Handles both inbound and outbound calls from a single entrypoint.
-Outbound dialing is done by Lambda; the agent only joins the room and greets.
+Uses one statically configured agent (Amazon Nova realtime) from config.
+Profile models and resolver are kept for future use.
+Handles both inbound and outbound calls. Outbound dialing is done by Lambda;
+the agent only joins the room and greets.
 """
 
 import logging
@@ -22,8 +22,8 @@ from livekit.plugins import silero
 # Register AWS plugin on main thread so realtime (Amazon Nova) works in job processes.
 import livekit.plugins.aws  # noqa: F401
 
+from .config import get_default_profile
 from .metadata import DispatchMetadata, parse_metadata
-from .profile_resolver import resolve_profile
 from .session_builder import build_session
 from .session_hooks import attach_session_hooks
 from .tools import DEFAULT_TELEPHONY_TOOL_IDS, resolve_tools
@@ -95,28 +95,17 @@ async def my_agent(ctx: JobContext):
         "job_id": ctx.job.id,
     }
 
-    # Step 1: Parse metadata (profile_id, profile_version, prompt_vars, etc.)
+    # Step 1: Parse metadata (prompt_vars for optional runtime substitution)
     meta: DispatchMetadata = parse_metadata(ctx.job.metadata, ctx.room.metadata)
 
-    # Step 2: Resolve profile configuration
-    tenant_id = meta.tenant_id or "default"
-    try:
-        profile = await resolve_profile(
-            tenant_id=tenant_id,
-            profile_id=meta.profile_id,
-            profile_version=meta.profile_version,
-        )
-        logger.info(
-            "Loaded profile: %s v%s (mode=%s, tenant=%s)",
-            profile.profile_id,
-            profile.version,
-            profile.mode,
-            tenant_id,
-        )
-    except Exception as e:
-        logger.error("Failed to resolve profile: %s, using defaults", e, exc_info=True)
-        from .config import get_default_profile
-        profile = get_default_profile()
+    # Step 2: Use static agent profile (Amazon Nova from config)
+    profile = get_default_profile()
+    logger.info(
+        "Using static profile: %s v%s (mode=%s)",
+        profile.profile_id,
+        profile.version,
+        profile.mode,
+    )
 
     # Step 3: Resolve tools from tool_refs
     requested_tool_ids = set(profile.tool_refs or [])
