@@ -65,13 +65,6 @@ spec:
                 secretKeyRef:
                   name: livekit-credentials
                   key: ASSEMBLYAI_API_KEY
-            # Prometheus /metrics (Grafana Cloud scrape); omit METRICS_PORT to disable
-            - name: METRICS_PORT
-              value: "9090"
-          ports:
-            - name: metrics
-              containerPort: 9090
-              protocol: TCP
           resources:
             requests:
               memory: "512Mi"
@@ -79,6 +72,6 @@ spec:
             limits:
               memory: "1Gi"
               cpu: "1000m"
-          # LiveKit agents connect outbound to LiveKit Cloud via WebSocket.
-          # Only HTTP is /metrics on METRICS_PORT (9090) for Prometheus/Grafana scrape.
+          # LiveKit agents don't expose HTTP endpoints
+          # They connect outbound to LiveKit Cloud via WebSocket
 

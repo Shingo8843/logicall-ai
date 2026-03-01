@@ -1217,7 +1217,6 @@ dependencies = [
     { name = "livekit-agents", extra = ["silero", "turn-detector"] },
     { name = "livekit-plugins-aws", extra = ["realtime"] },
     { name = "livekit-plugins-noise-cancellation" },
-    { name = "prometheus-client" },
     { name = "python-dotenv" },
 ]
 
@@ -1234,7 +1233,6 @@ requires-dist = [
     { name = "livekit-agents", extras = ["silero", "turn-detector"], specifier = "~=1.4" },
     { name = "livekit-plugins-aws", extras = ["realtime"], specifier = "~=1.4" },
     { name = "livekit-plugins-noise-cancellation", specifier = "~=0.2" },
-    { name = "prometheus-client", specifier = ">=0.19.0" },
     { name = "python-dotenv" },
 ]
 

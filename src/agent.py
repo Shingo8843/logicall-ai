@@ -22,7 +22,6 @@ from livekit.plugins import silero
 # Register AWS plugin on main thread so realtime (Amazon Nova) works in job processes.
 import livekit.plugins.aws  # noqa: F401
 
-from .egress import start_room_egress
 from .metadata import DispatchMetadata, parse_metadata
 from .profile_resolver import resolve_profile
 from .session_builder import build_session
@@ -75,11 +74,8 @@ server = AgentServer()
 
 
 def prewarm(proc: JobProcess):
-    """Prewarm VAD model for faster session startup; start /metrics server if METRICS_PORT set."""
+    """Prewarm VAD model for faster session startup."""
     proc.userdata["vad"] = silero.VAD.load()
-    from .metrics_server import ensure_metrics_server_started
-
-    ensure_metrics_server_started()
 
 
 server.setup_fnc = prewarm
@@ -159,10 +155,6 @@ async def my_agent(ctx: JobContext):
     # Step 7: Attach session hooks (latency, metrics, limits)
     attach_session_hooks(session, profile, ctx.room.name, ctx.job.id, ctx)
 
-    from .metrics_server import record_session_started
-
-    record_session_started(profile_id=profile.profile_id)
-
     logger.info(
         "Agent session started: profile=%s, mode=%s, language=%s",
         profile.profile_id,
@@ -173,13 +165,9 @@ async def my_agent(ctx: JobContext):
     # Step 8: Connect to room
     await ctx.connect()
 
-    # Step 8b: Start room egress (audio-only to S3) if EGRESS_ENABLED and EGRESS_S3_BUCKET are set
-    await start_room_egress(ctx.room.name)
-
-    # Step 9: Greet using the profile's scripted intro (e.g. carrier-checkup "Hi, this is X from Y. I'm calling regarding a shipment delay...")
-    # Do not override with a generic greeting so the agent follows the prompt's "How You Operate" / Introduction.
+    # Step 9: Greet (inbound or outbound: same behavior; SIP participant is already in room for outbound)
     await session.generate_reply(
-        instructions="Say exactly the Introduction from your instructions (step 1 under 'How You Operate'). Use only that scripted line. Do not add a generic greeting or 'How can I assist you?'."
+        instructions="Greet the user and offer your assistance."
     )
 
 

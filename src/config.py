@@ -91,7 +91,7 @@ class AudioInputOptions:
 class AudioOutputOptions:
     """Audio output configuration."""
     sample_rate: int = 24000
-    num_channels: int = 2  # stereo; set 1 for mono
+    num_channels: int = 1
     track_name: str | None = None  # None = use default "roomio_audio"
     # track_publish_options uses defaults (SOURCE_MICROPHONE)
 
